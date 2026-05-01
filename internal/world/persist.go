@@ -54,18 +54,27 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 		return fmt.Errorf("prepare meta: %w", err)
 	}
 	defer metaStmt.Close()
-	if _, err := metaStmt.ExecContext(ctx, "seed", fmt.Sprint(w.Seed)); err != nil {
-		return fmt.Errorf("set seed: %w", err)
-	}
 	era := string(w.Era)
 	if era == "" {
 		era = string(EraNow)
 	}
-	if _, err := metaStmt.ExecContext(ctx, "era", era); err != nil {
-		return fmt.Errorf("set era: %w", err)
+	pairs := []struct{ k, v string }{
+		{"seed", fmt.Sprint(w.Seed)},
+		{"era", era},
+		{"lat_top", fmt.Sprintf("%g", w.LatTop)},
+		{"lat_bottom", fmt.Sprintf("%g", w.LatBottom)},
+		{"obliquity", fmt.Sprintf("%g", w.Orbital.Obliquity)},
+		{"eccentricity", fmt.Sprintf("%g", w.Orbital.Eccentricity)},
+		{"precession", fmt.Sprintf("%g", w.Orbital.Precession)},
+		{"sea_level_delta", fmt.Sprintf("%g", w.Climate.SeaLevelDelta)},
+		{"glacial_index", fmt.Sprintf("%g", w.Climate.GlacialIndex)},
+		{"global_mean_temp_delta", fmt.Sprintf("%g", w.Climate.GlobalMeanTempDelta)},
+		{"generated_at", time.Now().UTC().Format(time.RFC3339)},
 	}
-	if _, err := metaStmt.ExecContext(ctx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return fmt.Errorf("set generated_at: %w", err)
+	for _, p := range pairs {
+		if _, err := metaStmt.ExecContext(ctx, p.k, p.v); err != nil {
+			return fmt.Errorf("set %s: %w", p.k, err)
+		}
 	}
 
 	return tx.Commit()

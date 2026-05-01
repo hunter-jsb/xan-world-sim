@@ -34,8 +34,17 @@ type RiverCell struct {
 }
 
 type World struct {
-	Seed    int64
-	Era     Era
+	Seed int64
+	Era  Era
+
+	// Latitude bounds of the map (degrees N). Northern hemisphere.
+	LatTop, LatBottom float64
+
+	// Orbital + climate context — currently driven by era; later
+	// will drive era (climate-derived worldgen).
+	Orbital OrbitalParams
+	Climate ClimateState
+
 	Regions []RegionCell
 	Rivers  []RiverCell
 }

@@ -32,7 +32,12 @@ func generateNow(seed int64) World {
 	foothillThick := genFoothillThickness(rng)
 	coastX := genCoastX(rng)
 
-	w := World{Seed: seed, Era: EraNow}
+	w := World{
+		Seed: seed, Era: EraNow,
+		LatTop: DefaultLatTop, LatBottom: DefaultLatBottom,
+		Orbital: OrbitalForEra(EraNow),
+		Climate: ClimateForEra(EraNow),
+	}
 
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {

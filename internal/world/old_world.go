@@ -26,7 +26,12 @@ func generateOldWorld(seed int64) World {
 	_ = genFoothillThickness(rng) // consume RNG so seeds align across eras
 	_ = genCoastX(rng)
 
-	w := World{Seed: seed, Era: EraOldWorld}
+	w := World{
+		Seed: seed, Era: EraOldWorld,
+		LatTop: DefaultLatTop, LatBottom: DefaultLatBottom,
+		Orbital: OrbitalForEra(EraOldWorld),
+		Climate: ClimateForEra(EraOldWorld),
+	}
 
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
