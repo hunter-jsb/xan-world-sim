@@ -83,18 +83,26 @@ func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 // row/column metadata. Pure function once the metadata is fixed.
 //
 // Agraria layout (NW):
-//   x in [0, 1], y in [2, 11]: AgrariaShelf (coast, deeper)
-//   x in [2, 3], y in [2, 11]: AgrariaUpland (higher, exposes first)
-// The plateau gets a notch carved out of its NW corner where the
-// upland intrudes.
+//   coast (x=0..1, y=4..17): AgrariaShelf — outer/west edge, deeper
+//   upland (x=2..agrariaMaxX(y), y=4..14, north-of-mountain):
+//                              AgrariaUpland — inner shelf with a
+//                              tapered east boundary that bulges
+//                              toward the cliff line
+// The cliff line (mountain row in the SW) cuts through Agraria's
+// range, so the cliff visually interrupts the shelf — geologically
+// correct, because the cliffs are the western face of the plateau
+// dropping down to the shelf.
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
-	// NW Agraria zone (shifted south, widened to 4 cols)
-	if y >= 2 && y <= 11 {
+	// NW Agraria zone — shifted south, widened, tapered
+	if y >= 4 && y <= 17 {
 		if x <= 1 {
 			return BZAgrariaShelf
 		}
-		if x <= 3 {
-			return BZAgrariaUpland
+		if y <= 14 && x <= agrariaMaxX(y) {
+			mr := mountainRow[x]
+			if mr < 0 || y < mr {
+				return BZAgrariaUpland
+			}
 		}
 	}
 	// West-most strip outside Agraria — deep Brine basin
@@ -121,4 +129,19 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 		return BZFoothill
 	}
 	return BZCradle
+}
+
+// agrariaMaxX defines the east boundary of the Agraria upland — bulges
+// in the middle latitudes where the shelf was widest, narrows back
+// north and south.
+func agrariaMaxX(y int) int {
+	switch {
+	case y >= 4 && y <= 6:
+		return 4
+	case y >= 7 && y <= 10:
+		return 5
+	case y >= 11 && y <= 14:
+		return 7
+	}
+	return -1
 }
