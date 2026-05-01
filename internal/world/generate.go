@@ -67,11 +67,21 @@ func Generate(seed int64, kya int) World {
 func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 	seaLevel := climate.SeaLevelDelta
 
-	if b.Zone == BZAgrariaShelf && b.Elevation >= seaLevel {
-		return RegionAgraria
+	// Shelf cells: when exposed they always read as Agraria (their
+	// lore identity) regardless of temperature; when submerged they
+	// stay as Brine (no "sea ice" intermediate — keeps the
+	// emerge/submerge transition visually clean).
+	if b.Zone == BZAgrariaShelf {
+		if b.Elevation >= seaLevel {
+			return RegionAgraria
+		}
+		return RegionBrine
 	}
-	if b.Zone == BZAgrariaUpland && b.Elevation >= seaLevel {
-		return RegionAgrariaUpland
+	if b.Zone == BZAgrariaUpland {
+		if b.Elevation >= seaLevel {
+			return RegionAgrariaUpland
+		}
+		return RegionBrine
 	}
 
 	if canGlaciate(b.Zone) {

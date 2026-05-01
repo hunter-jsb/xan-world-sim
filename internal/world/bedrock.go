@@ -78,7 +78,18 @@ func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 		out[y] = make([]BedrockCell, Width)
 		for x := 0; x < Width; x++ {
 			z := bedrockZone(x, y, mountainRow, foothillThick, coastX)
-			out[y][x] = BedrockCell{Zone: z, Elevation: elevationForZone(z)}
+			elev := elevationForZone(z)
+			// Per-cell elevation jitter for shelf cells: ±15m
+			// deterministic noise. Without this, every coast cell is
+			// exactly -80m and every upland cell exactly -40m, so the
+			// shelf flips between submerged and exposed in a single
+			// step. With jitter, cells emerge/submerge at different sea
+			// levels — you get a ragged shoreline that creeps in/out
+			// across many kya, which reads naturally instead of binary.
+			if z == BZAgrariaShelf || z == BZAgrariaUpland {
+				elev += (rng.Float64()*2 - 1) * 15
+			}
+			out[y][x] = BedrockCell{Zone: z, Elevation: elev}
 		}
 	}
 	return out
@@ -93,13 +104,13 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 		return BZBrineDeep
 	}
 	if x == agrariaCoastX {
-		if y >= 2 && y <= 18 {
+		if y >= 2 && y <= 19 {
 			return BZAgrariaShelf
 		}
 		return BZBrineDeep
 	}
 	if x == 4 {
-		if y >= 2 && y <= 14 {
+		if y >= 2 && y <= 16 {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
@@ -107,7 +118,7 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 	if x == 5 {
 		// Tapered upland — narrower than x=4, suggests the shelf
 		// thinning out as it approaches the plateau cliff base.
-		if y >= 4 && y <= 12 {
+		if y >= 4 && y <= 14 {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
