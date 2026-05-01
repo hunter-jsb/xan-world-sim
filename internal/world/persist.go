@@ -56,10 +56,11 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	defer metaStmt.Close()
 	era := string(w.Era)
 	if era == "" {
-		era = string(EraNow)
+		era = string(EraForKya(w.Kya))
 	}
 	pairs := []struct{ k, v string }{
 		{"seed", fmt.Sprint(w.Seed)},
+		{"kya", fmt.Sprint(w.Kya)},
 		{"era", era},
 		{"lat_top", fmt.Sprintf("%g", w.LatTop)},
 		{"lat_bottom", fmt.Sprintf("%g", w.LatBottom)},

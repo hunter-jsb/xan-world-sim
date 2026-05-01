@@ -1,5 +1,7 @@
 package world
 
+import "math"
+
 // World coordinates: a global lat/lon system, equator at 0°, north
 // pole at +90°, south pole at -90°. The 60x22 map sits in the
 // northern hemisphere at mid-to-high latitudes — roughly Anatolia
@@ -81,35 +83,58 @@ func EarthGlacialPeak() OrbitalParams {
 	}
 }
 
-// ClimateForEra returns the hand-tuned climate state for an era.
-// This is the bridge between the era system and a future climate-
-// driven worldgen pass.
-func ClimateForEra(era Era) ClimateState {
-	switch era {
-	case EraOldWorld:
-		return ClimateState{
-			SeaLevelDelta:       -120,
-			GlacialIndex:        1.0,
-			GlobalMeanTempDelta: -8.0,
-		}
-	default:
-		return ClimateState{
-			SeaLevelDelta:       0,
-			GlacialIndex:        0.0,
-			GlobalMeanTempDelta: 0,
-		}
+// GlacialIndex returns the climate-cycle position at a given kya
+// (kiloyears before present), in [0, 1]: 0 = warm interglacial peak,
+// 1 = full glacial peak.
+//
+// Modeled as a half-period cosine that puts a warm peak at kya=0
+// (the present-day Holocene) and a cold peak at kya=205 (our LGM).
+// One full warm-cold-warm cycle takes 410ka, so kya=410 is the prior
+// interglacial, kya=615 the prior cold peak, etc. Real-world climate
+// cycles are messier than this — eccentricity, obliquity, and
+// precession compound — but a single sinusoid suffices for now.
+func GlacialIndex(kya int) float64 {
+	if kya < 0 {
+		kya = 0
+	}
+	return 0.5 - 0.5*cos(math.Pi*float64(kya)/float64(KyaOldWorld))
+}
+
+// ClimateAt returns the climate state at a given kya. Sea level and
+// mean-temp delta lerp linearly with the glacial index between the
+// warm-peak (kya=0) and cold-peak (kya=205) anchor values.
+func ClimateAt(kya int) ClimateState {
+	gI := GlacialIndex(kya)
+	return ClimateState{
+		SeaLevelDelta:       -120 * gI,
+		GlacialIndex:        gI,
+		GlobalMeanTempDelta: -8 * gI,
 	}
 }
 
-// OrbitalForEra returns approximate orbital params for an era.
-func OrbitalForEra(era Era) OrbitalParams {
-	switch era {
-	case EraOldWorld:
-		return EarthGlacialPeak()
-	default:
-		return EarthNow()
+// OrbitalAt lerps orbital params between EarthNow and EarthGlacialPeak
+// proportional to GlacialIndex(kya). Real orbital params follow their
+// own periodicities (~26/41/100ka) and don't track glacial cycles
+// linearly — this is a placeholder that will become more correct when
+// we model the Milankovitch cycles directly.
+func OrbitalAt(kya int) OrbitalParams {
+	gI := GlacialIndex(kya)
+	now, peak := EarthNow(), EarthGlacialPeak()
+	return OrbitalParams{
+		Obliquity:    lerp(now.Obliquity, peak.Obliquity, gI),
+		Eccentricity: lerp(now.Eccentricity, peak.Eccentricity, gI),
+		Precession:   lerp(now.Precession, peak.Precession, gI),
 	}
 }
+
+// ClimateForEra and OrbitalForEra are kept as thin wrappers for
+// backward-compat callers that still pass an Era; new code should
+// call the kya-keyed variants directly.
+func ClimateForEra(era Era) ClimateState { return ClimateAt(era.Kya()) }
+func OrbitalForEra(era Era) OrbitalParams { return OrbitalAt(era.Kya()) }
+
+func lerp(a, b, t float64) float64 { return a + (b-a)*t }
+func cos(x float64) float64         { return math.Cos(x) }
 
 // glacierThreshold is the annual-mean surface temperature below which a
 // cell glaciates (in zones that *can* glaciate). Tuned so that the

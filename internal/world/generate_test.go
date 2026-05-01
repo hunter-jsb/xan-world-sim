@@ -15,21 +15,23 @@ import (
 // rand.Intn (global) instead of rng.Intn, this test fails immediately.
 func TestGenerate_Deterministic(t *testing.T) {
 	cases := []struct {
-		era  Era
+		kya  int
 		seed int64
 	}{
-		{EraNow, 0},
-		{EraNow, 1},
-		{EraNow, 42},
-		{EraNow, 1234567890},
-		{EraOldWorld, 0},
-		{EraOldWorld, 42},
+		{KyaNow, 0},
+		{KyaNow, 1},
+		{KyaNow, 42},
+		{KyaNow, 1234567890},
+		{KyaOldWorld, 0},
+		{KyaOldWorld, 42},
+		{100, 42}, // mid-cycle
+		{50, 42},  // post-LGM warming
 	}
 	for _, c := range cases {
 		c := c
-		t.Run(fmt.Sprintf("%s/seed=%d", c.era, c.seed), func(t *testing.T) {
-			a := hashWorld(Generate(c.seed, c.era))
-			b := hashWorld(Generate(c.seed, c.era))
+		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
+			a := hashWorld(Generate(c.seed, c.kya))
+			b := hashWorld(Generate(c.seed, c.kya))
 			if a != b {
 				t.Fatalf("two calls produced different worlds:\n  a=%s\n  b=%s", a, b)
 			}
@@ -43,26 +45,27 @@ func TestGenerate_Deterministic(t *testing.T) {
 // this test screams.
 func TestGenerate_Snapshot(t *testing.T) {
 	cases := []struct {
-		era      Era
+		kya      int
 		seed     int64
 		expected string
 	}{
-		{EraNow, 0, "a6d55392620ad90aca6424d8990852af5893527eecf8aa78aa5a8791da38c339"},
-		{EraNow, 42, "9bb20192b7fe838f8523b4fed6184621c2174eb61e095dde7200449f76b48444"},
-		{EraOldWorld, 0, "72497bd4a28f2448454a9c2af6945f811a49618fac5759e1da6b7e199e9ce496"},
-		{EraOldWorld, 42, "9d4da141f95da08f95258fa05bde93238fbdb5ac9aebd9f2d7ef5787debb6d8a"},
+		{KyaNow, 0, "0bc1973509853ce457d7171de1a2602eb9b3fe8084ce8923023cf22dde089802"},
+		{KyaNow, 42, "224e603c11515cb97619c0f11b89a33200e61c6ea767e7df4acc01feb31a2be1"},
+		{KyaOldWorld, 0, "f5a9b3baabb2a28bc754a60f89afc82ab0de54398a95cf56618bd96a3ea7649d"},
+		{KyaOldWorld, 42, "0a75e932005bdc77413801d1a4ef7504dbb51ca1e27d7603d3b892770120373f"},
+		{100, 42, "1dbfdb18f4c2f62d1aa659b080e293963c624eb40e9b68853a72fae80b7545c1"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
-		t.Run(fmt.Sprintf("%s/seed=%d", c.era, c.seed), func(t *testing.T) {
-			got := hashWorld(Generate(c.seed, c.era))
+		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
+			got := hashWorld(Generate(c.seed, c.kya))
 			if strings.HasPrefix(c.expected, "REPLACE_ME") {
 				t.Logf("snapshot hash (paste into test): %s", got)
-				t.Fatalf("expected value not yet pinned for %s/seed=%d", c.era, c.seed)
+				t.Fatalf("expected value not yet pinned for kya=%d/seed=%d", c.kya, c.seed)
 			}
 			if got != c.expected {
-				t.Fatalf("snapshot drift\n  era:  %s\n  seed: %d\n  got:  %s\n  want: %s\n\nIf this drift is intentional, update the expected value in generate_test.go.",
-					c.era, c.seed, got, c.expected)
+				t.Fatalf("snapshot drift\n  kya:  %d\n  seed: %d\n  got:  %s\n  want: %s\n\nIf this drift is intentional, update the expected value in generate_test.go.",
+					c.kya, c.seed, got, c.expected)
 			}
 		})
 	}
@@ -74,7 +77,7 @@ func TestGenerate_Snapshot(t *testing.T) {
 // "we re-ordered some loops" drift).
 func hashWorld(w World) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "seed=%d|era=%s|", w.Seed, w.Era)
+	fmt.Fprintf(&b, "seed=%d|kya=%d|era=%s|", w.Seed, w.Kya, w.Era)
 	fmt.Fprintf(&b, "lat=%g..%g|", w.LatTop, w.LatBottom)
 	fmt.Fprintf(&b, "orb=%g,%g,%g|",
 		w.Orbital.Obliquity, w.Orbital.Eccentricity, w.Orbital.Precession)

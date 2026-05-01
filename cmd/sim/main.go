@@ -19,6 +19,11 @@ import (
 	"github.com/hunterjsb/xan-world-sim/internal/world"
 )
 
+const (
+	stepSmall = 5
+	stepBig   = 25
+)
+
 type model struct {
 	ctx  context.Context
 	conn *sql.DB
@@ -27,6 +32,7 @@ type model struct {
 	mapStr string
 	legend string
 	seed   int64
+	kya    int
 	era    world.Era
 	status string
 
@@ -36,6 +42,7 @@ type model struct {
 type regenMsg struct {
 	mapStr string
 	seed   int64
+	kya    int
 	era    world.Era
 	err    error
 }
@@ -50,10 +57,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			m.status = "rerolling..."
-			return m, m.regen(time.Now().UnixNano(), m.era)
+			return m, m.regen(time.Now().UnixNano(), m.kya)
 		case "e":
-			next := m.era.Other()
-			m.status = "switching to " + string(next) + "..."
+			next := world.KyaNow
+			if m.kya == world.KyaNow {
+				next = world.KyaOldWorld
+			}
+			m.status = fmt.Sprintf("jumping to %dkya...", next)
+			return m, m.regen(m.seed, next)
+		case "]", "right":
+			next := m.kya - stepSmall
+			if next < 0 {
+				next = 0
+			}
+			m.status = fmt.Sprintf("→ %dkya", next)
+			return m, m.regen(m.seed, next)
+		case "[", "left":
+			next := m.kya + stepSmall
+			m.status = fmt.Sprintf("← %dkya", next)
+			return m, m.regen(m.seed, next)
+		case "}", "shift+right":
+			next := m.kya - stepBig
+			if next < 0 {
+				next = 0
+			}
+			m.status = fmt.Sprintf("→→ %dkya", next)
+			return m, m.regen(m.seed, next)
+		case "{", "shift+left":
+			next := m.kya + stepBig
+			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 		}
 	case regenMsg:
@@ -62,6 +94,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.mapStr = msg.mapStr
 			m.seed = msg.seed
+			m.kya = msg.kya
 			m.era = msg.era
 			m.status = ""
 		}
@@ -70,9 +103,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) regen(seed int64, era world.Era) tea.Cmd {
+func (m model) regen(seed int64, kya int) tea.Cmd {
 	return func() tea.Msg {
-		w := world.Generate(seed, era)
+		w := world.Generate(seed, kya)
 		if err := world.Persist(m.ctx, m.conn, w); err != nil {
 			return regenMsg{err: err}
 		}
@@ -91,7 +124,8 @@ func (m model) regen(seed int64, era world.Era) tea.Cmd {
 		return regenMsg{
 			mapStr: render.Grid(cells, rivers, m.minX, m.minY, m.maxX, m.maxY),
 			seed:   seed,
-			era:    era,
+			kya:    kya,
+			era:    w.Era,
 		}
 	}
 }
@@ -105,9 +139,12 @@ var (
 func (m model) View() string {
 	var b strings.Builder
 	title := render.Title("xan-world-sim — the cradle")
-	if m.era != "" {
-		title += dimStyle.Render("   era: ") + seedStyle.Render(string(m.era))
+	title += dimStyle.Render("   t: ") + seedStyle.Render(fmt.Sprintf("%dkya", m.kya))
+	if string(m.era) != "" && string(m.era) != fmt.Sprintf("%dkya", m.kya) {
+		title += dimStyle.Render(" (") + seedStyle.Render(string(m.era)) + dimStyle.Render(")")
 	}
+	gI := world.GlacialIndex(m.kya)
+	title += dimStyle.Render("   glacial: ") + seedStyle.Render(fmt.Sprintf("%.2f", gI))
 	if m.seed != 0 {
 		title += dimStyle.Render("   seed: ") + seedStyle.Render(fmt.Sprintf("%d", m.seed))
 	}
@@ -117,7 +154,7 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.legend)
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("r reroll · e era · q/esc quit"))
+	b.WriteString(dimStyle.Render("] / [ step ±5ka · } / { step ±25ka · r reroll · e jump now/LGM · q quit"))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
@@ -174,9 +211,10 @@ func main() {
 	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
 
 	seed := readMetaInt(ctx, conn, "seed")
+	kya := int(readMetaInt(ctx, conn, "kya"))
 	era := world.Era(readMetaString(ctx, conn, "era"))
 	if era == "" {
-		era = world.EraNow
+		era = world.EraForKya(kya)
 	}
 
 	if *printOnce {
@@ -185,14 +223,15 @@ func main() {
 		fmt.Println(mapStr)
 		fmt.Println()
 		fmt.Println(render.Legend())
-		fmt.Printf("\nera: %s   seed: %d\n", era, seed)
+		fmt.Printf("\nt: %dkya (%s)   glacial: %.2f   seed: %d\n",
+			kya, era, world.GlacialIndex(kya), seed)
 		return
 	}
 
 	m := model{
 		ctx: ctx, conn: conn, q: q,
 		mapStr: mapStr, legend: render.Legend(),
-		seed: seed, era: era,
+		seed: seed, kya: kya, era: era,
 		minX: minX, minY: minY, maxX: maxX, maxY: maxY,
 	}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {

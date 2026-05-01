@@ -35,13 +35,18 @@ type RiverCell struct {
 
 type World struct {
 	Seed int64
-	Era  Era
+
+	// Kya is the canonical state — kiloyears before present. Climate,
+	// orbital params, and the derived Era label all hang off this.
+	Kya int
+
+	// Era is a display-only label derived from Kya (e.g., "now" or
+	// "near LGM"). Persisted alongside Kya for human-readable inspection.
+	Era Era
 
 	// Latitude bounds of the map (degrees N). Northern hemisphere.
 	LatTop, LatBottom float64
 
-	// Orbital + climate context — currently driven by era; later
-	// will drive era (climate-derived worldgen).
 	Orbital OrbitalParams
 	Climate ClimateState
 

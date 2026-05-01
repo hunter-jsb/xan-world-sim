@@ -2,33 +2,41 @@ package world
 
 import "math/rand"
 
-// Generate produces a deterministic world from the given seed and era.
+// Generate produces a deterministic world from the given seed and a
+// moment in geological time (kya = kiloyears before present).
 //
-// The pipeline is climate-driven: a single bedrock model (zones +
-// elevations) is built once from the seed, then the era's ClimateState
-// (sea level, mean temp delta) is applied per cell to derive whether
-// that cell shows up as land, sea, or glacier. So glacier extent and
-// coastlines *emerge* from the climate rather than being painted per
-// era.
+// The pipeline is climate-driven and time-driven: a single bedrock
+// model (zones + elevations) is built once from the seed and is
+// stable across all kya — geology doesn't move on these timescales.
+// Climate (sea level, mean temp delta) at the given kya is then
+// applied per cell to derive whether the cell shows up as land,
+// sea, or glacier. As kya scrubs from 205 toward 0, the ice retreats
+// smoothly and Agraria submerges — both as consequences of the
+// climate cycle, not hardcoded snapshots.
 //
-// Rivers remain hand-laid for now; they exist only at EraNow because
-// they're a Melt-era feature (the glacial-peak world has no rivers).
-func Generate(seed int64, era Era) World {
+// Rivers remain hand-laid for now and exist only when GlacialIndex
+// is low (post-Melt-ish climate). The glacial-peak world has no
+// rivers because the meltwater hasn't been released yet.
+func Generate(seed int64, kya int) World {
 	rng := rand.New(rand.NewSource(seed))
 	bedrock := generateBedrock(rng)
 
+	climate := ClimateAt(kya)
+
 	w := World{
-		Seed: seed, Era: era,
+		Seed:      seed,
+		Kya:       kya,
+		Era:       EraForKya(kya),
 		LatTop:    DefaultLatTop,
 		LatBottom: DefaultLatBottom,
-		Orbital:   OrbitalForEra(era),
-		Climate:   ClimateForEra(era),
+		Orbital:   OrbitalAt(kya),
+		Climate:   climate,
 	}
 
 	for y := 0; y < Height; y++ {
 		lat := Latitude(y, w.LatTop, w.LatBottom)
 		for x := 0; x < Width; x++ {
-			rid := classify(bedrock[y][x], lat, w.Climate)
+			rid := classify(bedrock[y][x], lat, climate)
 			if rid > 0 {
 				w.Regions = append(w.Regions, RegionCell{
 					RegionID: rid, X: int64(x), Y: int64(y),
@@ -37,7 +45,10 @@ func Generate(seed int64, era Era) World {
 		}
 	}
 
-	if era == EraNow {
+	// Rivers are a post-Melt feature: meltwater has to be released
+	// before the drainage network exists. Threshold of 0.3 ~= the
+	// climate has retreated far enough from the glacial peak.
+	if climate.GlacialIndex < 0.3 {
 		w.Rivers = staticRivers()
 	}
 	return w
