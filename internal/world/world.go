@@ -18,6 +18,8 @@ const (
 	RegionDoab       int64 = 8
 	RegionCliff      int64 = 9
 	RegionFoothill   int64 = 10
+	RegionGlacier    int64 = 11
+	RegionAgraria    int64 = 12
 )
 
 type RegionCell struct {
@@ -33,6 +35,7 @@ type RiverCell struct {
 
 type World struct {
 	Seed    int64
+	Era     Era
 	Regions []RegionCell
 	Rivers  []RiverCell
 }

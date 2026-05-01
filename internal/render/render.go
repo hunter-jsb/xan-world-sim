@@ -17,6 +17,8 @@ var glyphForKind = map[string]rune{
 	"doab":        '#',
 	"sea_brine":   '%',
 	"sea_eastern": '~',
+	"glacier":     '*',
+	"agraria":     ';',
 	"unknown":     '?',
 	"drowned":     '_',
 }
@@ -30,6 +32,8 @@ var styleForKind = map[string]lipgloss.Style{
 	"doab":        lipgloss.NewStyle().Foreground(lipgloss.Color("94")),  // brown (rugged)
 	"sea_brine":   lipgloss.NewStyle().Foreground(lipgloss.Color("19")),  // deep blue (saline)
 	"sea_eastern": lipgloss.NewStyle().Foreground(lipgloss.Color("38")),  // cyan (fresh)
+	"glacier":     lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true), // pale icy
+	"agraria":     lipgloss.NewStyle().Foreground(lipgloss.Color("179")), // tan (exposed shelf)
 	"unknown":     lipgloss.NewStyle().Foreground(lipgloss.Color("99")),  // purple
 	"drowned":     lipgloss.NewStyle().Foreground(lipgloss.Color("60")),  // muted blue
 }
@@ -117,5 +121,9 @@ func Legend() string {
 		item("sea_eastern", "eastern sea"),
 		riverStyle.Render(",") + dimStyle.Render(" river"),
 	}, "   ")
-	return row1 + "\n" + row2
+	row3 := strings.Join([]string{
+		item("glacier", "glacier"),
+		item("agraria", "agraria"),
+	}, "   ")
+	return row1 + "\n" + row2 + "\n" + row3
 }

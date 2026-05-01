@@ -20,21 +20,23 @@ import (
 )
 
 type model struct {
-	ctx    context.Context
-	conn   *sql.DB
-	q      *db.Queries
+	ctx  context.Context
+	conn *sql.DB
+	q    *db.Queries
 
 	mapStr string
 	legend string
 	seed   int64
+	era    world.Era
 	status string
 
 	minX, minY, maxX, maxY int64
 }
 
-type rerolledMsg struct {
+type regenMsg struct {
 	mapStr string
 	seed   int64
+	era    world.Era
 	err    error
 }
 
@@ -48,14 +50,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			m.status = "rerolling..."
-			return m, m.reroll()
+			return m, m.regen(time.Now().UnixNano(), m.era)
+		case "e":
+			next := m.era.Other()
+			m.status = "switching to " + string(next) + "..."
+			return m, m.regen(m.seed, next)
 		}
-	case rerolledMsg:
+	case regenMsg:
 		if msg.err != nil {
-			m.status = "reroll error: " + msg.err.Error()
+			m.status = "regen error: " + msg.err.Error()
 		} else {
 			m.mapStr = msg.mapStr
 			m.seed = msg.seed
+			m.era = msg.era
 			m.status = ""
 		}
 		return m, nil
@@ -63,28 +70,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) reroll() tea.Cmd {
+func (m model) regen(seed int64, era world.Era) tea.Cmd {
 	return func() tea.Msg {
-		seed := time.Now().UnixNano()
-		w := world.Generate(seed)
+		w := world.Generate(seed, era)
 		if err := world.Persist(m.ctx, m.conn, w); err != nil {
-			return rerolledMsg{err: err}
+			return regenMsg{err: err}
 		}
 		cells, err := m.q.GetCellsInBounds(m.ctx, db.GetCellsInBoundsParams{
 			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
 		})
 		if err != nil {
-			return rerolledMsg{err: err}
+			return regenMsg{err: err}
 		}
 		rivers, err := m.q.GetRiverCellsInBounds(m.ctx, db.GetRiverCellsInBoundsParams{
 			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
 		})
 		if err != nil {
-			return rerolledMsg{err: err}
+			return regenMsg{err: err}
 		}
-		return rerolledMsg{
+		return regenMsg{
 			mapStr: render.Grid(cells, rivers, m.minX, m.minY, m.maxX, m.maxY),
 			seed:   seed,
+			era:    era,
 		}
 	}
 }
@@ -98,6 +105,9 @@ var (
 func (m model) View() string {
 	var b strings.Builder
 	title := render.Title("xan-world-sim — the cradle")
+	if m.era != "" {
+		title += dimStyle.Render("   era: ") + seedStyle.Render(string(m.era))
+	}
 	if m.seed != 0 {
 		title += dimStyle.Render("   seed: ") + seedStyle.Render(fmt.Sprintf("%d", m.seed))
 	}
@@ -107,7 +117,7 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.legend)
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("r reroll · q/esc quit"))
+	b.WriteString(dimStyle.Render("r reroll · e era · q/esc quit"))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
@@ -163,7 +173,11 @@ func main() {
 
 	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
 
-	seed := readSeed(ctx, conn)
+	seed := readMetaInt(ctx, conn, "seed")
+	era := world.Era(readMetaString(ctx, conn, "era"))
+	if era == "" {
+		era = world.EraNow
+	}
 
 	if *printOnce {
 		fmt.Println(render.Title("xan-world-sim — the cradle"))
@@ -171,15 +185,14 @@ func main() {
 		fmt.Println(mapStr)
 		fmt.Println()
 		fmt.Println(render.Legend())
-		if seed != 0 {
-			fmt.Printf("\nseed: %d\n", seed)
-		}
+		fmt.Printf("\nera: %s   seed: %d\n", era, seed)
 		return
 	}
 
 	m := model{
 		ctx: ctx, conn: conn, q: q,
-		mapStr: mapStr, legend: render.Legend(), seed: seed,
+		mapStr: mapStr, legend: render.Legend(),
+		seed: seed, era: era,
 		minX: minX, minY: minY, maxX: maxX, maxY: maxY,
 	}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
@@ -187,13 +200,21 @@ func main() {
 	}
 }
 
-func readSeed(ctx context.Context, conn *sql.DB) int64 {
+func readMetaString(ctx context.Context, conn *sql.DB, key string) string {
 	var s string
-	err := conn.QueryRowContext(ctx, "SELECT value FROM world_meta WHERE key = 'seed'").Scan(&s)
+	err := conn.QueryRowContext(ctx, "SELECT value FROM world_meta WHERE key = ?", key).Scan(&s)
 	if err != nil {
+		return ""
+	}
+	return s
+}
+
+func readMetaInt(ctx context.Context, conn *sql.DB, key string) int64 {
+	s := readMetaString(ctx, conn, key)
+	if s == "" {
 		return 0
 	}
-	var seed int64
-	fmt.Sscanf(s, "%d", &seed)
-	return seed
+	var v int64
+	fmt.Sscanf(s, "%d", &v)
+	return v
 }

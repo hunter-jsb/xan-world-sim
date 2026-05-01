@@ -57,6 +57,13 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := metaStmt.ExecContext(ctx, "seed", fmt.Sprint(w.Seed)); err != nil {
 		return fmt.Errorf("set seed: %w", err)
 	}
+	era := string(w.Era)
+	if era == "" {
+		era = string(EraNow)
+	}
+	if _, err := metaStmt.ExecContext(ctx, "era", era); err != nil {
+		return fmt.Errorf("set era: %w", err)
+	}
 	if _, err := metaStmt.ExecContext(ctx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return fmt.Errorf("set generated_at: %w", err)
 	}

@@ -2,28 +2,41 @@ package world
 
 import "math/rand"
 
-// Generate produces a deterministic world from the given seed.
-// The shape mirrors the hand-laid migrations (NE->SW Rift, doab, rivers)
-// with seeded RNG variation on three axes:
+// Generate produces a deterministic world from the given seed and era.
+// Bedrock geography (mountain row shape, plateau extent) is shared
+// across eras; what changes is sea level, glacier extent, river
+// presence, and which shelves are exposed vs drowned.
+func Generate(seed int64, era Era) World {
+	switch era {
+	case EraOldWorld:
+		return generateOldWorld(seed)
+	default:
+		return generateNow(seed)
+	}
+}
+
+// generateNow is the post-Melt present: full Eastern Sea, Brine at
+// present level, Agraria drowned, rivers flowing.
 //
-//   - mountain row: random-walk jitter ±2 around the step-function base
-//   - foothill thickness: per-column ±1 jitter around the base
-//   - east coast: random-walk jitter ±2 around the base x=52
+// RNG is layered on the hand-laid step functions:
+//   - mountain row: random-walk jitter ±2 around the base
+//   - foothill thickness: per-column ±1 around the base
+//   - east coast: random-walk jitter ±2 around x=52
 //
-// Rivers are kept on their hand-laid paths (rng-perturbing them risks
-// crossing the jittered mountain — defer to a later pass).
-func Generate(seed int64) World {
+// Rivers are still hand-laid paths (jittering them risks crossing
+// the jittered mountain — defer until rivers become a real flow sim).
+func generateNow(seed int64) World {
 	rng := rand.New(rand.NewSource(seed))
 
 	mountainRow := genMountainRow(rng)
 	foothillThick := genFoothillThickness(rng)
 	coastX := genCoastX(rng)
 
-	w := World{Seed: seed}
+	w := World{Seed: seed, Era: EraNow}
 
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
-			rid := classify(x, y, mountainRow, foothillThick, coastX)
+			rid := classifyNow(x, y, mountainRow, foothillThick, coastX)
 			if rid > 0 {
 				w.Regions = append(w.Regions, RegionCell{
 					RegionID: rid, X: int64(x), Y: int64(y),
@@ -36,7 +49,7 @@ func Generate(seed int64) World {
 	return w
 }
 
-func classify(x, y int, mountainRow, foothillThick, coastX []int) int64 {
+func classifyNow(x, y int, mountainRow, foothillThick, coastX []int) int64 {
 	if x <= 1 {
 		return RegionBrine
 	}
