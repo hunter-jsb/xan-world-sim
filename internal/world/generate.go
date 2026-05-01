@@ -3,45 +3,32 @@ package world
 import "math/rand"
 
 // Generate produces a deterministic world from the given seed and era.
-// Bedrock geography (mountain row shape, plateau extent) is shared
-// across eras; what changes is sea level, glacier extent, river
-// presence, and which shelves are exposed vs drowned.
+//
+// The pipeline is climate-driven: a single bedrock model (zones +
+// elevations) is built once from the seed, then the era's ClimateState
+// (sea level, mean temp delta) is applied per cell to derive whether
+// that cell shows up as land, sea, or glacier. So glacier extent and
+// coastlines *emerge* from the climate rather than being painted per
+// era.
+//
+// Rivers remain hand-laid for now; they exist only at EraNow because
+// they're a Melt-era feature (the glacial-peak world has no rivers).
 func Generate(seed int64, era Era) World {
-	switch era {
-	case EraOldWorld:
-		return generateOldWorld(seed)
-	default:
-		return generateNow(seed)
-	}
-}
-
-// generateNow is the post-Melt present: full Eastern Sea, Brine at
-// present level, Agraria drowned, rivers flowing.
-//
-// RNG is layered on the hand-laid step functions:
-//   - mountain row: random-walk jitter ±2 around the base
-//   - foothill thickness: per-column ±1 around the base
-//   - east coast: random-walk jitter ±2 around x=52
-//
-// Rivers are still hand-laid paths (jittering them risks crossing
-// the jittered mountain — defer until rivers become a real flow sim).
-func generateNow(seed int64) World {
 	rng := rand.New(rand.NewSource(seed))
-
-	mountainRow := genMountainRow(rng)
-	foothillThick := genFoothillThickness(rng)
-	coastX := genCoastX(rng)
+	bedrock := generateBedrock(rng)
 
 	w := World{
-		Seed: seed, Era: EraNow,
-		LatTop: DefaultLatTop, LatBottom: DefaultLatBottom,
-		Orbital: OrbitalForEra(EraNow),
-		Climate: ClimateForEra(EraNow),
+		Seed: seed, Era: era,
+		LatTop:    DefaultLatTop,
+		LatBottom: DefaultLatBottom,
+		Orbital:   OrbitalForEra(era),
+		Climate:   ClimateForEra(era),
 	}
 
 	for y := 0; y < Height; y++ {
+		lat := Latitude(y, w.LatTop, w.LatBottom)
 		for x := 0; x < Width; x++ {
-			rid := classifyNow(x, y, mountainRow, foothillThick, coastX)
+			rid := classify(bedrock[y][x], lat, w.Climate)
 			if rid > 0 {
 				w.Regions = append(w.Regions, RegionCell{
 					RegionID: rid, X: int64(x), Y: int64(y),
@@ -50,57 +37,84 @@ func generateNow(seed int64) World {
 		}
 	}
 
-	w.Rivers = staticRivers()
+	if era == EraNow {
+		w.Rivers = staticRivers()
+	}
 	return w
 }
 
-func classifyNow(x, y int, mountainRow, foothillThick, coastX []int) int64 {
-	if x <= 1 {
-		return RegionBrine
+// classify is the climate→surface mapper. Order of precedence:
+//  1. Agraria shelf gets a "is exposed?" check first — when its
+//     elevation is at or above sea level, it always reads as Agraria,
+//     regardless of temperature. (Lore: temperate microclimate; the
+//     Coastals lived there during glacial peaks, so it can't be ice.)
+//  2. Glaciation, where the zone allows it. Glacier outranks
+//     submerged-water — a frozen sea surface reads as glacier (ice
+//     shelf), not sea.
+//  3. Submerged water, mapped to whichever sea/basin the zone is in.
+//  4. Otherwise the zone's exposed-land identity.
+func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
+	seaLevel := climate.SeaLevelDelta
+
+	if b.Zone == BZAgrariaShelf && b.Elevation >= seaLevel {
+		return RegionAgraria
 	}
-	if x >= coastX[y] {
-		return RegionEastSea
-	}
-	mr := mountainRow[x]
-	if y < mr {
-		return RegionPlateau
-	}
-	if y == mr {
-		if x <= 11 {
-			return RegionCliff
+
+	if canGlaciate(b.Zone) {
+		if Temperature(lat, b.Elevation, climate) < glacierThreshold {
+			return RegionGlacier
 		}
+	}
+
+	if b.Elevation < seaLevel {
+		switch b.Zone {
+		case BZBrineDeep, BZAgrariaShelf:
+			return RegionBrine
+		case BZEastBasin:
+			return RegionEastSea
+		default:
+			// land zones aren't normally below sea level
+			return RegionEastSea
+		}
+	}
+
+	switch b.Zone {
+	case BZPlateau:
+		return RegionPlateau
+	case BZMountain:
 		return RegionMountain
-	}
-	if isDoab(x, y) {
-		return RegionDoab
-	}
-	if y > mr && y <= mr+foothillThick[x] {
+	case BZCliff:
+		return RegionCliff
+	case BZFoothill:
 		return RegionFoothill
+	case BZDoab:
+		return RegionDoab
+	case BZCradle:
+		return RegionCradle
+	case BZAgrariaShelf:
+		return RegionAgraria
+	case BZEastBasin:
+		// Exposed (e.g., extreme low-stand) — reads as cradle-ish land.
+		return RegionCradle
+	case BZBrineDeep:
+		// Should not normally happen; deep basin shouldn't be exposed.
+		return RegionUnknown
 	}
-	return RegionCradle
+	return 0
 }
 
-func isDoab(x, y int) bool {
-	if x >= 18 && x <= 21 && (y == 11 || y == 12) {
-		return true
-	}
-	if x >= 18 && x <= 20 && y == 13 {
-		return true
-	}
-	return false
-}
+// ----- bedrock-procgen helpers (used by generateBedrock) -----
 
 func genMountainRow(rng *rand.Rand) []int {
 	out := make([]int, Width)
 	jitter := 0
-	// walk from east to west so successive bands stay correlated
 	for x := Width - 1; x >= 0; x-- {
 		base := baseMountainRow(x)
 		if base < 0 {
 			out[x] = -1
 			continue
 		}
-		jitter += rng.Intn(3) - 1 // -1, 0, +1
+		jitter += rng.Intn(3) - 1
 		jitter = clamp(jitter, -2, 2)
 		mr := base + jitter
 		mr = clamp(mr, 1, Height-3)
@@ -117,7 +131,7 @@ func genFoothillThickness(rng *rand.Rand) []int {
 			out[x] = 0
 			continue
 		}
-		ft := base + rng.Intn(3) - 1 // -1, 0, +1
+		ft := base + rng.Intn(3) - 1
 		out[x] = clamp(ft, 0, 5)
 	}
 	return out
@@ -180,6 +194,16 @@ func baseFoothillThickness(x int) int {
 	return 0
 }
 
+func isDoab(x, y int) bool {
+	if x >= 18 && x <= 21 && (y == 11 || y == 12) {
+		return true
+	}
+	if x >= 18 && x <= 20 && y == 13 {
+		return true
+	}
+	return false
+}
+
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -189,6 +213,8 @@ func clamp(v, lo, hi int) int {
 	}
 	return v
 }
+
+// ----- rivers -----
 
 func staticRivers() []RiverCell {
 	type p struct{ x, y int }
@@ -203,7 +229,6 @@ func staticRivers() []RiverCell {
 		{id: 4, path: []p{{28, 21}, {27, 20}, {26, 19}, {25, 18}, {24, 18}}},
 		{id: 5, path: nil},
 	}
-	// Main river: (25,18) east to (51,18)
 	for x := 25; x <= 51; x++ {
 		rivers[4].path = append(rivers[4].path, p{x, 18})
 	}

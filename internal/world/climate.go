@@ -110,3 +110,65 @@ func OrbitalForEra(era Era) OrbitalParams {
 		return EarthNow()
 	}
 }
+
+// glacierThreshold is the annual-mean surface temperature below which a
+// cell glaciates (in zones that *can* glaciate). Tuned so that the
+// present-day cradle stays land at lat ~37°N and the glacial-peak
+// cradle freezes; can be lifted/lowered to make worlds icier/warmer.
+const glacierThreshold = -2.0
+
+// canGlaciate decides which bedrock zones are *visually* allowed to
+// turn into glacier when the temperature drops below threshold.
+//
+// Mountains, cliffs, the doab, and the high plateau stay rendered as
+// themselves even when frozen — they're tall enough that we want the
+// rocky identity to read through (real-world Alps are partly glaciated
+// at high elevation but still read as "mountains," not "ice sheet").
+//
+// The deep Brine basin can't freeze in our model — too thermally
+// inertial; a real saline body of that depth wouldn't freeze through.
+func canGlaciate(zone BedrockZone) bool {
+	switch zone {
+	case BZMountain, BZCliff, BZPlateau, BZDoab, BZBrineDeep:
+		return false
+	default:
+		return true
+	}
+}
+
+// Temperature returns the approximate annual-mean surface temperature
+// in degrees C at a cell with the given latitude (degrees N), bedrock
+// elevation (m relative to present sea level), and current climate
+// state.
+//
+// Rough model:
+//   - base(lat) is a linear cosine-ish approximation: ~30°C at the
+//     equator, falling 0.5°C per degree of latitude.
+//   - Lapse rate is the standard ~6.5°C per kilometer of *positive*
+//     elevation (below sea level we use surface elevation = 0).
+//   - The climate's GlobalMeanTempDelta is amplified at high latitudes
+//     (real-world polar amplification ~2x): factor 1 + |lat|/40.
+//
+// This is intentionally simple. It produces qualitatively correct
+// behavior across our two eras without needing an atmospheric sim.
+func Temperature(lat, elev float64, c ClimateState) float64 {
+	base := 30.0 - 0.5*absFloat(lat)
+	surfaceElev := elev
+	if surfaceElev < 0 {
+		surfaceElev = 0
+	}
+	lapse := -6.5 * surfaceElev / 1000.0
+	delta := c.GlobalMeanTempDelta * latAmplification(lat)
+	return base + lapse + delta
+}
+
+func latAmplification(lat float64) float64 {
+	return 1.0 + absFloat(lat)/40.0
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

@@ -49,8 +49,8 @@ func TestGenerate_Snapshot(t *testing.T) {
 	}{
 		{EraNow, 0, "a6d55392620ad90aca6424d8990852af5893527eecf8aa78aa5a8791da38c339"},
 		{EraNow, 42, "9bb20192b7fe838f8523b4fed6184621c2174eb61e095dde7200449f76b48444"},
-		{EraOldWorld, 0, "b3501ef545bb270017ca757edcf0e427f01ddf187e7e02ed4230218e800e2936"},
-		{EraOldWorld, 42, "f256ae3a2826a2188b29a5795770bea7551e29c2234e2f5237cf7945a373f76b"},
+		{EraOldWorld, 0, "72497bd4a28f2448454a9c2af6945f811a49618fac5759e1da6b7e199e9ce496"},
+		{EraOldWorld, 42, "9d4da141f95da08f95258fa05bde93238fbdb5ac9aebd9f2d7ef5787debb6d8a"},
 	}
 	for _, c := range cases {
 		c := c
