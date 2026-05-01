@@ -3,12 +3,16 @@ package render
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/hunterjsb/xan-world-sim/internal/db"
 )
 
 var glyphForKind = map[string]rune{
 	"plateau":     '^',
 	"mountain":    'A',
+	"foothill":    'n',
+	"cliff":       '|',
 	"cradle":      '.',
 	"doab":        '#',
 	"sea_brine":   '%',
@@ -16,6 +20,26 @@ var glyphForKind = map[string]rune{
 	"unknown":     '?',
 	"drowned":     '_',
 }
+
+var styleForKind = map[string]lipgloss.Style{
+	"plateau":     lipgloss.NewStyle().Foreground(lipgloss.Color("253")), // light gray (snow)
+	"mountain":    lipgloss.NewStyle().Foreground(lipgloss.Color("244")), // medium gray (stone)
+	"foothill":    lipgloss.NewStyle().Foreground(lipgloss.Color("100")), // olive (rolling)
+	"cliff":       lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true),
+	"cradle":      lipgloss.NewStyle().Foreground(lipgloss.Color("28")),  // green (fertile)
+	"doab":        lipgloss.NewStyle().Foreground(lipgloss.Color("94")),  // brown (rugged)
+	"sea_brine":   lipgloss.NewStyle().Foreground(lipgloss.Color("19")),  // deep blue (saline)
+	"sea_eastern": lipgloss.NewStyle().Foreground(lipgloss.Color("38")),  // cyan (fresh)
+	"unknown":     lipgloss.NewStyle().Foreground(lipgloss.Color("99")),  // purple
+	"drowned":     lipgloss.NewStyle().Foreground(lipgloss.Color("60")),  // muted blue
+}
+
+var (
+	emptyStyle = lipgloss.NewStyle()
+	riverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true) // bright cyan
+	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+)
 
 const (
 	emptyGlyph = ' '
@@ -28,11 +52,11 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 	if width <= 0 || height <= 0 {
 		return ""
 	}
-	grid := make([][]rune, height)
+	grid := make([][]string, height)
 	for i := range grid {
-		grid[i] = make([]rune, width)
+		grid[i] = make([]string, width)
 		for j := range grid[i] {
-			grid[i][j] = emptyGlyph
+			grid[i][j] = " "
 		}
 	}
 	// Layer 1: regions
@@ -41,11 +65,15 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
 			continue
 		}
-		if g, ok := glyphForKind[c.Kind]; ok {
-			grid[gy][gx] = g
-		} else {
-			grid[gy][gx] = '?'
+		g, ok := glyphForKind[c.Kind]
+		if !ok {
+			g = '?'
 		}
+		style, ok := styleForKind[c.Kind]
+		if !ok {
+			style = emptyStyle
+		}
+		grid[gy][gx] = style.Render(string(g))
 	}
 	// Layer 2: rivers (overlaid)
 	for _, r := range rivers {
@@ -53,12 +81,12 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
 			continue
 		}
-		grid[gy][gx] = riverGlyph
+		grid[gy][gx] = riverStyle.Render(string(riverGlyph))
 	}
 
 	var b strings.Builder
 	for i, row := range grid {
-		b.WriteString(string(row))
+		b.WriteString(strings.Join(row, ""))
 		if i < len(grid)-1 {
 			b.WriteByte('\n')
 		}
@@ -66,9 +94,28 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 	return b.String()
 }
 
+func Title(s string) string {
+	return titleStyle.Render(s)
+}
+
 func Legend() string {
-	return strings.Join([]string{
-		"^ plateau    A mountain   . cradle      # doab",
-		"% brine      ~ eastern    , river       ? unknown",
-	}, "\n")
+	item := func(kind string, label string) string {
+		g := glyphForKind[kind]
+		st := styleForKind[kind]
+		return st.Render(string(g)) + dimStyle.Render(" "+label)
+	}
+	row1 := strings.Join([]string{
+		item("plateau", "plateau"),
+		item("mountain", "mountain"),
+		item("foothill", "foothill"),
+		item("cliff", "cliff"),
+		item("doab", "doab"),
+	}, "   ")
+	row2 := strings.Join([]string{
+		item("cradle", "cradle"),
+		item("sea_brine", "brine"),
+		item("sea_eastern", "eastern sea"),
+		riverStyle.Render(",") + dimStyle.Render(" river"),
+	}, "   ")
+	return row1 + "\n" + row2
 }

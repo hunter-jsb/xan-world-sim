@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	_ "modernc.org/sqlite"
 
 	"github.com/hunterjsb/xan-world-sim/internal/db"
@@ -35,13 +37,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	var b []byte
-	b = append(b, "xan-world-sim — the cradle (placeholder seed)\n\n"...)
-	b = append(b, m.mapStr...)
-	b = append(b, "\n\n"...)
-	b = append(b, m.legend...)
-	b = append(b, "\n\nq/esc to quit"...)
-	return string(b)
+	var b strings.Builder
+	b.WriteString(render.Title("xan-world-sim — the cradle"))
+	b.WriteString("\n\n")
+	b.WriteString(m.mapStr)
+	b.WriteString("\n\n")
+	b.WriteString(m.legend)
+	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("q/esc to quit"))
+	return b.String()
 }
 
 func main() {
@@ -93,7 +97,7 @@ func main() {
 	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
 
 	if *printOnce {
-		fmt.Println("xan-world-sim — the cradle (placeholder seed)")
+		fmt.Println(render.Title("xan-world-sim — the cradle"))
 		fmt.Println()
 		fmt.Println(mapStr)
 		fmt.Println()
