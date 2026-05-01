@@ -9,18 +9,19 @@ import (
 )
 
 var glyphForKind = map[string]rune{
-	"plateau":     '^',
-	"mountain":    'A',
-	"foothill":    'n',
-	"cliff":       '|',
-	"cradle":      '.',
-	"doab":        '#',
-	"sea_brine":   '%',
-	"sea_eastern": '~',
-	"glacier":     '*',
-	"agraria":     ';',
-	"unknown":     '?',
-	"drowned":     '_',
+	"plateau":        '^',
+	"mountain":       'A',
+	"foothill":       'n',
+	"cliff":          '|',
+	"cradle":         '.',
+	"doab":           '#',
+	"sea_brine":      '%',
+	"sea_eastern":    '~',
+	"glacier":        '*',
+	"agraria":        ';', // coast: lower shelf, marshy
+	"agraria_upland": '\'', // upland: higher, drier, exposes first
+	"unknown":        '?',
+	"drowned":        '_',
 }
 
 var styleForKind = map[string]lipgloss.Style{
@@ -32,10 +33,11 @@ var styleForKind = map[string]lipgloss.Style{
 	"doab":        lipgloss.NewStyle().Foreground(lipgloss.Color("94")),  // brown (rugged)
 	"sea_brine":   lipgloss.NewStyle().Foreground(lipgloss.Color("19")),  // deep blue (saline)
 	"sea_eastern": lipgloss.NewStyle().Foreground(lipgloss.Color("38")),  // cyan (fresh)
-	"glacier":     lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true), // pale icy
-	"agraria":     lipgloss.NewStyle().Foreground(lipgloss.Color("179")), // tan (exposed shelf)
-	"unknown":     lipgloss.NewStyle().Foreground(lipgloss.Color("99")),  // purple
-	"drowned":     lipgloss.NewStyle().Foreground(lipgloss.Color("60")),  // muted blue
+	"glacier":        lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true), // pale icy
+	"agraria":        lipgloss.NewStyle().Foreground(lipgloss.Color("143")), // muted yellow-tan (lower coast — wetter)
+	"agraria_upland": lipgloss.NewStyle().Foreground(lipgloss.Color("179")), // brighter tan (upland — drier, grass)
+	"unknown":        lipgloss.NewStyle().Foreground(lipgloss.Color("99")),  // purple
+	"drowned":        lipgloss.NewStyle().Foreground(lipgloss.Color("60")),  // muted blue
 }
 
 var (
@@ -123,7 +125,8 @@ func Legend() string {
 	}, "   ")
 	row3 := strings.Join([]string{
 		item("glacier", "glacier"),
-		item("agraria", "agraria"),
+		item("agraria", "agraria coast"),
+		item("agraria_upland", "agraria upland"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3
 }

@@ -18,8 +18,9 @@ const (
 	RegionDoab       int64 = 8
 	RegionCliff      int64 = 9
 	RegionFoothill   int64 = 10
-	RegionGlacier    int64 = 11
-	RegionAgraria    int64 = 12
+	RegionGlacier        int64 = 11
+	RegionAgraria        int64 = 12
+	RegionAgrariaUpland  int64 = 13
 )
 
 type RegionCell struct {

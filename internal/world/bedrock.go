@@ -17,9 +17,10 @@ const (
 	BZFoothill
 	BZCradle
 	BZDoab
-	BZBrineDeep    // SW basin floor — too deep to expose or freeze
-	BZAgrariaShelf // NW continental shelf — drowned now, exposed at glacial peaks
-	BZEastBasin    // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
+	BZBrineDeep      // SW basin floor — too deep to expose or freeze
+	BZAgrariaShelf   // NW continental shelf, lower (coast) — drowned now, exposes later as sea drops
+	BZAgrariaUpland  // NW continental shelf, higher (upland) — drowned now but emerges first
+	BZEastBasin      // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
 )
 
 // BedrockCell is the era-independent geology at one (x,y) position.
@@ -49,7 +50,9 @@ func elevationForZone(z BedrockZone) float64 {
 	case BZBrineDeep:
 		return -800
 	case BZAgrariaShelf:
-		return -80 // just below present sea level — exposed when ΔSL < ~-80
+		return -80 // coast: lower shelf, exposed when ΔSL < ~-80
+	case BZAgrariaUpland:
+		return -40 // upland: higher shelf, exposes first as sea drops
 	case BZEastBasin:
 		return -150 // shallower basin — Eastern Sea floor
 	}
@@ -78,11 +81,24 @@ func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 
 // bedrockZone classifies one cell's geology from the procgen-derived
 // row/column metadata. Pure function once the metadata is fixed.
+//
+// Agraria layout (NW):
+//   x in [0, 1], y in [2, 11]: AgrariaShelf (coast, deeper)
+//   x in [2, 3], y in [2, 11]: AgrariaUpland (higher, exposes first)
+// The plateau gets a notch carved out of its NW corner where the
+// upland intrudes.
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
-	if x <= 1 {
-		if y <= 7 {
+	// NW Agraria zone (shifted south, widened to 4 cols)
+	if y >= 2 && y <= 11 {
+		if x <= 1 {
 			return BZAgrariaShelf
 		}
+		if x <= 3 {
+			return BZAgrariaUpland
+		}
+	}
+	// West-most strip outside Agraria — deep Brine basin
+	if x <= 1 {
 		return BZBrineDeep
 	}
 	if x >= coastX[y] {

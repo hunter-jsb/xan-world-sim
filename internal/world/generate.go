@@ -70,6 +70,9 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 	if b.Zone == BZAgrariaShelf && b.Elevation >= seaLevel {
 		return RegionAgraria
 	}
+	if b.Zone == BZAgrariaUpland && b.Elevation >= seaLevel {
+		return RegionAgrariaUpland
+	}
 
 	if canGlaciate(b.Zone) {
 		if Temperature(lat, b.Elevation, climate) < glacierThreshold {
@@ -79,7 +82,7 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 
 	if b.Elevation < seaLevel {
 		switch b.Zone {
-		case BZBrineDeep, BZAgrariaShelf:
+		case BZBrineDeep, BZAgrariaShelf, BZAgrariaUpland:
 			return RegionBrine
 		case BZEastBasin:
 			return RegionEastSea
@@ -104,6 +107,8 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 		return RegionCradle
 	case BZAgrariaShelf:
 		return RegionAgraria
+	case BZAgrariaUpland:
+		return RegionAgrariaUpland
 	case BZEastBasin:
 		// Exposed (e.g., extreme low-stand) — reads as cradle-ish land.
 		return RegionCradle
