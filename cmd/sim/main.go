@@ -75,14 +75,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	const minX, minY, maxX, maxY = 0, 0, 59, 21
+
 	cells, err := q.GetCellsInBounds(ctx, db.GetCellsInBoundsParams{
-		X: 0, X_2: 20, Y: 0, Y_2: 20,
+		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
 	})
 	if err != nil {
 		log.Fatalf("get cells: %v", err)
 	}
+	rivers, err := q.GetRiverCellsInBounds(ctx, db.GetRiverCellsInBoundsParams{
+		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
+	})
+	if err != nil {
+		log.Fatalf("get river cells: %v", err)
+	}
 
-	mapStr := render.Grid(cells, 0, 0, 10, 8)
+	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
 
 	if *printOnce {
 		fmt.Println("xan-world-sim — the cradle (placeholder seed)")

@@ -15,3 +15,15 @@ type RegionCell struct {
 	X        int64 `json:"x"`
 	Y        int64 `json:"y"`
 }
+
+type River struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type RiverCell struct {
+	RiverID int64 `json:"river_id"`
+	X       int64 `json:"x"`
+	Y       int64 `json:"y"`
+	Ord     int64 `json:"ord"`
+}

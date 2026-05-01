@@ -11,9 +11,11 @@ import (
 type Querier interface {
 	GetCellsInBounds(ctx context.Context, arg GetCellsInBoundsParams) ([]GetCellsInBoundsRow, error)
 	GetRegion(ctx context.Context, id int64) (Region, error)
+	GetRiverCellsInBounds(ctx context.Context, arg GetRiverCellsInBoundsParams) ([]GetRiverCellsInBoundsRow, error)
 	InsertCell(ctx context.Context, arg InsertCellParams) error
 	InsertRegion(ctx context.Context, arg InsertRegionParams) (Region, error)
 	ListRegions(ctx context.Context) ([]Region, error)
+	ListRivers(ctx context.Context) ([]River, error)
 }
 
 var _ Querier = (*Queries)(nil)

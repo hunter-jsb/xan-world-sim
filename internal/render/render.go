@@ -10,15 +10,19 @@ var glyphForKind = map[string]rune{
 	"plateau":     '^',
 	"mountain":    'A',
 	"cradle":      '.',
+	"doab":        '#',
 	"sea_brine":   '%',
 	"sea_eastern": '~',
 	"unknown":     '?',
 	"drowned":     '_',
 }
 
-const emptyGlyph = ' '
+const (
+	emptyGlyph = ' '
+	riverGlyph = ','
+)
 
-func Grid(cells []db.GetCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
+func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
 	width := int(maxX - minX + 1)
 	height := int(maxY - minY + 1)
 	if width <= 0 || height <= 0 {
@@ -31,9 +35,9 @@ func Grid(cells []db.GetCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
 			grid[i][j] = emptyGlyph
 		}
 	}
+	// Layer 1: regions
 	for _, c := range cells {
-		gy := int(c.Y - minY)
-		gx := int(c.X - minX)
+		gy, gx := int(c.Y-minY), int(c.X-minX)
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
 			continue
 		}
@@ -43,6 +47,15 @@ func Grid(cells []db.GetCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
 			grid[gy][gx] = '?'
 		}
 	}
+	// Layer 2: rivers (overlaid)
+	for _, r := range rivers {
+		gy, gx := int(r.Y-minY), int(r.X-minX)
+		if gy < 0 || gy >= height || gx < 0 || gx >= width {
+			continue
+		}
+		grid[gy][gx] = riverGlyph
+	}
+
 	var b strings.Builder
 	for i, row := range grid {
 		b.WriteString(string(row))
@@ -55,8 +68,7 @@ func Grid(cells []db.GetCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
 
 func Legend() string {
 	return strings.Join([]string{
-		"^ plateau    A mountain   . cradle",
-		"% brine      ~ eastern    ? unknown",
-		"_ drowned",
+		"^ plateau    A mountain   . cradle      # doab",
+		"% brine      ~ eastern    , river       ? unknown",
 	}, "\n")
 }
