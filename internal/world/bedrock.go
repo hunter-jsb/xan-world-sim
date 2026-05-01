@@ -17,10 +17,23 @@ const (
 	BZFoothill
 	BZCradle
 	BZDoab
-	BZBrineDeep      // SW basin floor — too deep to expose or freeze
-	BZAgrariaShelf   // NW continental shelf, lower (coast) — drowned now, exposes later as sea drops
-	BZAgrariaUpland  // NW continental shelf, higher (upland) — drowned now but emerges first
-	BZEastBasin      // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
+	BZBrineDeep     // SW basin floor — too deep to expose or freeze
+	BZAgrariaShelf  // shelf coast — drowned now, exposes later as sea drops
+	BZAgrariaUpland // shelf upland — drowned now but emerges first
+	BZEastBasin     // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
+)
+
+// Map allocation along x:
+//   x =  0..2  : Brine deep (always submerged — gives the shoreline real
+//                visible water to retreat from / advance into)
+//   x =  3     : Agraria coast (deeper shelf, exposes later)
+//   x =  4..5  : Agraria upland (higher shelf, exposes first, tapers
+//                in y to suggest a natural wedge against the plateau)
+//   x =  6..51 : Land (plateau / mountain / foothill / cradle / doab)
+//   x = 52..59 : Eastern Sea (unchanged)
+const (
+	landStartX  = 6
+	agrariaCoastX = 3
 )
 
 // BedrockCell is the era-independent geology at one (x,y) position.
@@ -29,10 +42,6 @@ type BedrockCell struct {
 	Elevation float64 // meters relative to present-day sea level (0)
 }
 
-// elevationForZone returns the canonical elevation for a bedrock zone.
-// These are the numbers temperature() and sea-level checks consume.
-// Currently fixed per zone (no per-cell jitter); jitter can be added
-// later if we want elevation-noisy glaciation/coastlines.
 func elevationForZone(z BedrockZone) float64 {
 	switch z {
 	case BZPlateau:
@@ -59,10 +68,6 @@ func elevationForZone(z BedrockZone) float64 {
 	return 0
 }
 
-// generateBedrock produces the era-independent geology for the whole map
-// from a seeded RNG. Reuses the same step-function-with-jitter approach
-// established in earlier passes: mountain row + foothill thickness + east
-// coast all walked with bounded random jitter for natural irregularity.
 func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 	mountainRow := genMountainRow(rng)
 	foothillThick := genFoothillThickness(rng)
@@ -79,45 +84,47 @@ func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 	return out
 }
 
-// bedrockZone classifies one cell's geology from the procgen-derived
-// row/column metadata. Pure function once the metadata is fixed.
-//
-// Agraria layout (NW):
-//   coast (x=0..1, y=4..17): AgrariaShelf — outer/west edge, deeper
-//   upland (x=2..agrariaMaxX(y), y=4..14, north-of-mountain):
-//                              AgrariaUpland — inner shelf with a
-//                              tapered east boundary that bulges
-//                              toward the cliff line
-// The cliff line (mountain row in the SW) cuts through Agraria's
-// range, so the cliff visually interrupts the shelf — geologically
-// correct, because the cliffs are the western face of the plateau
-// dropping down to the shelf.
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
-	// NW Agraria zone — shifted south, widened, tapered
-	if y >= 4 && y <= 17 {
-		if x <= 1 {
-			return BZAgrariaShelf
-		}
-		if y <= 14 && x <= agrariaMaxX(y) {
-			mr := mountainRow[x]
-			if mr < 0 || y < mr {
-				return BZAgrariaUpland
-			}
-		}
-	}
-	// West-most strip outside Agraria — deep Brine basin
-	if x <= 1 {
+	// West water/shelf strip: 3 cols of pure Brine + 3 cols of shelf.
+	// At kya=0 the shelf is submerged → entire strip reads as Brine;
+	// at glacial peak the shelf emerges and the strip is half water /
+	// half land. The shoreline literally lives on this strip.
+	if x <= 2 {
 		return BZBrineDeep
 	}
+	if x == agrariaCoastX {
+		if y >= 2 && y <= 18 {
+			return BZAgrariaShelf
+		}
+		return BZBrineDeep
+	}
+	if x == 4 {
+		if y >= 2 && y <= 14 {
+			return BZAgrariaUpland
+		}
+		return BZBrineDeep
+	}
+	if x == 5 {
+		// Tapered upland — narrower than x=4, suggests the shelf
+		// thinning out as it approaches the plateau cliff base.
+		if y >= 4 && y <= 12 {
+			return BZAgrariaUpland
+		}
+		return BZBrineDeep
+	}
+
+	// Eastern Sea strip (uses jittered coastX)
 	if x >= coastX[y] {
 		return BZEastBasin
 	}
+
+	// Inland (x=6..51)
 	mr := mountainRow[x]
-	if y < mr {
+	if mr >= 0 && y < mr {
 		return BZPlateau
 	}
-	if y == mr {
-		if x <= 11 {
+	if mr >= 0 && y == mr {
+		if x <= 15 {
 			return BZCliff
 		}
 		return BZMountain
@@ -125,23 +132,67 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 	if isDoab(x, y) {
 		return BZDoab
 	}
-	if y > mr && y <= mr+foothillThick[x] {
+	if mr >= 0 && y > mr && y <= mr+foothillThick[x] {
 		return BZFoothill
 	}
 	return BZCradle
 }
 
-// agrariaMaxX defines the east boundary of the Agraria upland — bulges
-// in the middle latitudes where the shelf was widest, narrows back
-// north and south.
-func agrariaMaxX(y int) int {
+// baseMountainRow returns the y-row of the mountain band at column x
+// (or -1 if there is no mountain at this column). All ranges shifted
+// east by 4 from the original layout — the easternmost band (mr=2)
+// would have collided with the Eastern Sea so it's dropped.
+func baseMountainRow(x int) int {
 	switch {
-	case y >= 4 && y <= 6:
+	case x >= 48 && x <= 51:
+		return 3
+	case x >= 44 && x <= 47:
 		return 4
-	case y >= 7 && y <= 10:
+	case x >= 40 && x <= 43:
 		return 5
-	case y >= 11 && y <= 14:
+	case x >= 36 && x <= 39:
+		return 6
+	case x >= 32 && x <= 35:
 		return 7
+	case x >= 28 && x <= 31:
+		return 8
+	case x >= 24 && x <= 27:
+		return 9
+	case x >= 20 && x <= 23:
+		return 10
+	case x >= 16 && x <= 19:
+		return 11
+	case x >= 12 && x <= 15:
+		return 12
+	case x >= 8 && x <= 11:
+		return 13
+	case x >= 6 && x <= 7:
+		return 14
 	}
 	return -1
+}
+
+func baseFoothillThickness(x int) int {
+	switch {
+	case x >= 6 && x <= 15:
+		return 0
+	case x >= 16 && x <= 27:
+		return 1
+	case x >= 28 && x <= 39:
+		return 2
+	case x >= 40 && x <= 51:
+		return 3
+	}
+	return 0
+}
+
+// isDoab — shifted east by 4 from old coords (was x=18..21).
+func isDoab(x, y int) bool {
+	if x >= 22 && x <= 25 && (y == 11 || y == 12) {
+		return true
+	}
+	if x >= 22 && x <= 24 && y == 13 {
+		return true
+	}
+	return false
 }
