@@ -34,6 +34,10 @@ func main() {
 		}
 	}
 
+	if *kya < 0 || *kya > world.KyaMax {
+		log.Fatalf("--kya %d out of range [0, %d]", *kya, world.KyaMax)
+	}
+
 	if *seed == 0 {
 		*seed = time.Now().UnixNano()
 		fmt.Fprintf(os.Stderr, "no --seed given; using %d\n", *seed)

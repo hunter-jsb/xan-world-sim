@@ -16,6 +16,13 @@ const (
 	// Canonical kya values for the named eras.
 	KyaNow      = 0
 	KyaOldWorld = 205
+
+	// KyaMax caps how far back the sim will run. Our lore covers ~250kya
+	// of human history (the Dawn at ~250kya); 300 gives a little
+	// pre-Dawn deep-time headroom without spilling into prior climate
+	// cycles, where the half-period cosine would loop the world back to
+	// looking like "now."
+	KyaMax = 300
 )
 
 // ParseEra accepts the named-era strings ("now", "205kya") for

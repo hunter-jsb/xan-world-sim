@@ -24,6 +24,16 @@ const (
 	stepBig   = 25
 )
 
+func clampKya(k int) int {
+	if k < 0 {
+		return 0
+	}
+	if k > world.KyaMax {
+		return world.KyaMax
+	}
+	return k
+}
+
 type model struct {
 	ctx  context.Context
 	conn *sql.DB
@@ -66,25 +76,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("jumping to %dkya...", next)
 			return m, m.regen(m.seed, next)
 		case "]", "right":
-			next := m.kya - stepSmall
-			if next < 0 {
-				next = 0
+			next := clampKya(m.kya - stepSmall)
+			if next == m.kya {
+				return m, nil
 			}
 			m.status = fmt.Sprintf("→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "[", "left":
-			next := m.kya + stepSmall
+			next := clampKya(m.kya + stepSmall)
+			if next == m.kya {
+				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
+				return m, nil
+			}
 			m.status = fmt.Sprintf("← %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
-			next := m.kya - stepBig
-			if next < 0 {
-				next = 0
+			next := clampKya(m.kya - stepBig)
+			if next == m.kya {
+				return m, nil
 			}
 			m.status = fmt.Sprintf("→→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
-			next := m.kya + stepBig
+			next := clampKya(m.kya + stepBig)
+			if next == m.kya {
+				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
+				return m, nil
+			}
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 		}
