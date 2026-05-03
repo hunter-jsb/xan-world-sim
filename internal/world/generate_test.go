@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "bb65307a9a44ba304b53e0a62421949b6f00d8b51e75bda86addab707cae0c8f"},
-		{KyaNow, 42, "3de673b790669a648b69c72ff6361c675872198ddf000901302b5a3db80b36db"},
+		{KyaNow, 0, "c1b1a1fa5320919938d2bbda7b15ab3d07c29c1d65dda565a18b72aff8e8bc64"},
+		{KyaNow, 42, "f51e1d1b631f568e3e94c3acfbe103d88eeb7c2307f90f1f6ecab088eaa1a319"},
 		{KyaOldWorld, 0, "04cb6bbcaa54781ea2587529972919803669baef2bb8a2a66df65f5831e0d7af"},
 		{KyaOldWorld, 42, "7dde3191c7d91e428778e12a72a7f9168dc1802a5ee9eeb14bf75b70923c410a"},
-		{100, 42, "cbadd9316ec8b1d5ad72f27fc09cc52ccf782bd8becce94648ce0130d3967139"}, // mid-cycle
+		{100, 42, "90a5823f868127568a71ff7a979803924478eeb06a8f5bf084f7bde930001d1f"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c

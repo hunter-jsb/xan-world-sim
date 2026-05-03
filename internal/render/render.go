@@ -51,6 +51,8 @@ var glyphForKind = map[string]rune{
 	"tundra":         '`',
 	"marsh":          '=',
 	"seat":           'H',
+	"march":          'M',
+	"headwater":      'Y',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -104,6 +106,12 @@ var shadingByKind = map[string]kindShading{
 	"marsh": {base: 100, amp: 50, colors: [5]string{"58", "100", "107", "143", "108"}},
 	// seat — bold gold, civilization marker on a river chain
 	"seat": {base: 100, amp: 50, colors: [5]string{"178", "214", "220", "226", "227"}, bold: true},
+	// march — slate steel, the wall against the mountain wilds; cooler
+	// and more austere than the gold of a salmon-lord's hall
+	"march": {base: 500, amp: 200, colors: [5]string{"60", "67", "74", "110", "117"}, bold: true},
+	// headwater — pale silver-cyan, sacred ice-melt source; brighter
+	// at high elevation since the headwaters of major rivers sit high
+	"headwater":      {base: 800, amp: 300, colors: [5]string{"81", "117", "153", "159", "195"}, bold: true},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -262,7 +270,11 @@ func Legend() string {
 		item("forest", "forest"),
 		item("tundra", "tundra"),
 		item("marsh", "marsh"),
-		item("seat", "seat"),
+		item("seat", "tributary"),
 	}, "   ")
-	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4
+	row5 := strings.Join([]string{
+		item("march", "march"),
+		item("headwater", "headwater"),
+	}, "   ")
+	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5
 }

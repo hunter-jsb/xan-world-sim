@@ -129,50 +129,146 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
-	// Salmon lord seats — major rivers get a settlement at their
-	// midpoint. We use the *same* river network the player sees, so
-	// seats follow the actual hydrology. Threshold of "river length
-	// at least 5 cells" is grounded in scale: a river that short is
-	// barely a stream at our cell size and wouldn't sustain a lord's
-	// hall. Climate-gated through the rivers themselves — if the
-	// river doesn't exist (e.g. glacial peak), no seat. The seat is
-	// flipped onto the river cell directly; render layer paints
-	// seats *over* the river glyph so the river chain has a
-	// settlement at the bend, geographically correct (a lord's seat
-	// sits on the river bank, with the river still flowing past).
+	// Lord seats — three tiers, each with a distinct geographic
+	// signature drawn from the lore typology in `region.md`:
+	//
+	//   Tributary — midpoint of a river of length ≥ 5. The salmon-lord
+	//               hall on a navigable stretch. Scale-gated: shorter
+	//               rivers can't sustain a lord at our cell size.
+	//   Headwater — head (Ord=1) of a river of length ≥ 10. Sacred
+	//               sources at continental rivers; twice the Tributary
+	//               scale because Headwater holds are bigger seats
+	//               (closest to dwarves, contested by religious orders).
+	//   March    — foothill/cradle directly adjacent to a connected
+	//              mountain massif of ≥3 cells. Geographically the
+	//              "wall" — defense against the mountain wilds is the
+	//              seat's reason to exist. One per massif, at the
+	//              highest perimeter cell (most defensible).
+	//
+	// All three are climate-coupled through the layers below them
+	// (rivers vanish at LGM → no Tributary or Headwater; mountains
+	// stay → Marches persist through ice ages, which matches the lore:
+	// March lineages are the *oldest*, since the mountain is forever).
+	seatSet := make(map[[2]int64]int64)
 	if len(w.Rivers) > 0 {
 		groups := make(map[int64][]RiverCell)
 		for _, r := range w.Rivers {
 			groups[r.RiverID] = append(groups[r.RiverID], r)
 		}
-		seatSet := make(map[[2]int64]bool)
 		for _, group := range groups {
-			if len(group) < 5 {
-				continue
-			}
 			sort.Slice(group, func(i, j int) bool { return group[i].Ord < group[j].Ord })
-			mid := group[len(group)/2]
-			seatSet[[2]int64{mid.X, mid.Y}] = true
-		}
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if seatSet[[2]int64{rc.X, rc.Y}] {
-				rc.RegionID = RegionSeat
+			if len(group) >= 5 {
+				mid := group[len(group)/2]
+				seatSet[[2]int64{mid.X, mid.Y}] = RegionSeat
+			}
+			if len(group) >= 10 {
+				head := group[0]
+				if _, taken := seatSet[[2]int64{head.X, head.Y}]; !taken {
+					seatSet[[2]int64{head.X, head.Y}] = RegionHeadwater
+				}
 			}
 		}
-		// Filter seat cells out of the rivers list so the directional
-		// river glyph doesn't paint over the seat. The river is
-		// implicitly there — the seat sits on it.
-		if len(seatSet) > 0 {
-			filtered := w.Rivers[:0]
-			for _, r := range w.Rivers {
-				if seatSet[[2]int64{r.X, r.Y}] {
+	}
+	// March detection: BFS-flood mountain cells into massifs, then for
+	// each massif of meaningful size pick the highest-elevation
+	// foothill/cradle cell touching it. Don't overwrite existing seats
+	// (Tributary or Headwater) — if the mountain massif's natural
+	// March cell is already a river-tier seat, the role doubles up
+	// and we just keep the river-tier label. This is fine: the
+	// typology in lore explicitly bleeds (a Tributary on a wall-
+	// adjacent stretch *is* a March in spirit).
+	{
+		const minMassifCells = 3
+		regionAt := make(map[[2]int]int64, len(w.Regions))
+		elevAt := make(map[[2]int]float64, len(w.Regions))
+		for _, rc := range w.Regions {
+			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+		}
+		visited := make(map[[2]int]bool)
+		isMountain := func(p [2]int) bool { return regionAt[p] == RegionMountain }
+		isWallish := func(p [2]int) bool {
+			id := regionAt[p]
+			return id == RegionFoothill || id == RegionCradle ||
+				id == RegionForest || id == RegionTundra ||
+				id == RegionMarsh
+		}
+		for y := 0; y < Height; y++ {
+			for x := 0; x < Width; x++ {
+				p := [2]int{x, y}
+				if !isMountain(p) || visited[p] {
 					continue
 				}
-				filtered = append(filtered, r)
+				var massif [][2]int
+				queue := [][2]int{p}
+				visited[p] = true
+				for len(queue) > 0 {
+					head := queue[0]
+					queue = queue[1:]
+					massif = append(massif, head)
+					for dy := -1; dy <= 1; dy++ {
+						for dx := -1; dx <= 1; dx++ {
+							if dx == 0 && dy == 0 {
+								continue
+							}
+							n := [2]int{head[0] + dx, head[1] + dy}
+							if isMountain(n) && !visited[n] {
+								visited[n] = true
+								queue = append(queue, n)
+							}
+						}
+					}
+				}
+				if len(massif) < minMassifCells {
+					continue
+				}
+				best := [2]int{-1, -1}
+				bestElev := -1e9
+				for _, m := range massif {
+					for dy := -1; dy <= 1; dy++ {
+						for dx := -1; dx <= 1; dx++ {
+							if dx == 0 && dy == 0 {
+								continue
+							}
+							n := [2]int{m[0] + dx, m[1] + dy}
+							if !isWallish(n) {
+								continue
+							}
+							if elevAt[n] > bestElev {
+								bestElev = elevAt[n]
+								best = n
+							}
+						}
+					}
+				}
+				if best[0] < 0 {
+					continue
+				}
+				key := [2]int64{int64(best[0]), int64(best[1])}
+				if _, taken := seatSet[key]; !taken {
+					seatSet[key] = RegionMarch
+				}
 			}
-			w.Rivers = filtered
 		}
+	}
+	if len(seatSet) > 0 {
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if id, ok := seatSet[[2]int64{rc.X, rc.Y}]; ok {
+				rc.RegionID = id
+			}
+		}
+		// Filter river cells that landed on a seat — the directional
+		// river glyph would paint over the seat marker. River presence
+		// is implicit (the seat sits on it).
+		filtered := w.Rivers[:0]
+		for _, r := range w.Rivers {
+			if _, ok := seatSet[[2]int64{r.X, r.Y}]; ok {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		w.Rivers = filtered
 	}
 
 	// Marsh: vegetated lowland directly adjacent to a water body, where
