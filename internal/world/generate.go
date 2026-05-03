@@ -93,6 +93,93 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Drainage — for each river, count how many other rivers (including
+	// itself) flow into it transitively. The merge target is detected
+	// from the river's tail cell: among 8-neighbors that sit on a
+	// *different* river, pick the one with lowest bedrock elevation
+	// (steepest descent). That neighbor's river is the merge target.
+	// If no such neighbor exists, the river reaches sea or boundary —
+	// it's a "trunk" candidate.
+	//
+	// Drainage propagation: each river contributes 1 to itself and to
+	// every ancestor in its merge chain. The river with maximum
+	// drainage is the cradle's "Mississippi" from the lore.
+	if len(w.RiverInfo) > 0 {
+		groups := make(map[int64][]RiverCell, len(w.RiverInfo))
+		for _, r := range w.Rivers {
+			groups[r.RiverID] = append(groups[r.RiverID], r)
+		}
+		for id := range groups {
+			sort.Slice(groups[id], func(i, j int) bool { return groups[id][i].Ord < groups[id][j].Ord })
+		}
+		riverAt := make(map[[2]int]int64, len(w.Rivers))
+		for _, r := range w.Rivers {
+			riverAt[[2]int{int(r.X), int(r.Y)}] = r.RiverID
+		}
+		mergeTarget := make(map[int64]int64, len(w.RiverInfo))
+		for id, group := range groups {
+			tail := group[len(group)-1]
+			tx, ty := int(tail.X), int(tail.Y)
+			// flowRivers stops a chain when it would walk into a cell
+			// already claimed by another river — so the tail's flow
+			// direction *must* lead into another river's cell. We don't
+			// have flowDir here; we approximate by picking the 8-neighbor
+			// on a different river with the lowest bedrock elevation
+			// (steepest descent target). Don't compare against the tail's
+			// elevation because pit-fill artifacts can leave the merge
+			// target slightly higher in raw bedrock terms — what we know
+			// for sure is the chain ended because *some* adjacent
+			// different-river cell was the next flow step.
+			var bestID int64 = -1
+			bestElev := 1e18
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					nx, ny := tx+dx, ty+dy
+					if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+						continue
+					}
+					nID, ok := riverAt[[2]int{nx, ny}]
+					if !ok || nID == id {
+						continue
+					}
+					nElev := bedrock[ny][nx].Elevation
+					if nElev < bestElev {
+						bestElev = nElev
+						bestID = nID
+					}
+				}
+			}
+			if bestID > 0 {
+				mergeTarget[id] = bestID
+			}
+		}
+		drainage := make(map[int64]int64, len(w.RiverInfo))
+		// Each river contributes 1 to itself and 1 to each ancestor.
+		// Visited set guards against pathological cycles in mergeTarget
+		// (the elevation-min heuristic for merge detection isn't truly
+		// guaranteed acyclic, even though flow direction is).
+		for _, ri := range w.RiverInfo {
+			cur := ri.ID
+			drainage[cur]++
+			visited := map[int64]bool{cur: true}
+			for {
+				next, ok := mergeTarget[cur]
+				if !ok || visited[next] {
+					break
+				}
+				drainage[next]++
+				visited[next] = true
+				cur = next
+			}
+		}
+		for i := range w.RiverInfo {
+			w.RiverInfo[i].Drainage = drainage[w.RiverInfo[i].ID]
+		}
+	}
+
 	if len(lakes) > 0 {
 		lakeSet := make(map[[2]int]bool, len(lakes))
 		for _, l := range lakes {

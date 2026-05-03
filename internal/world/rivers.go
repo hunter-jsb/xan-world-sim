@@ -8,9 +8,15 @@ import (
 
 // River carries the identity and a display name for a single river,
 // independent of its actual cells. Stored in the rivers table.
+//
+// Drainage = number of rivers (transitively) that feed into this one,
+// including itself. A leaf headwater stub has drainage 1; the trunk
+// of a regional river system has the highest drainage. Lets consumers
+// pick out the "Mississippi" of the cradle.
 type River struct {
-	ID   int64
-	Name string
+	ID       int64
+	Name     string
+	Drainage int64
 }
 
 // riverThreshold is the flow accumulation a cell needs to be in the

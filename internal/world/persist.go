@@ -51,13 +51,13 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	riverStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO rivers (id, name) VALUES (?, ?)")
+		"INSERT INTO rivers (id, name, drainage) VALUES (?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare river info: %w", err)
 	}
 	defer riverStmt.Close()
 	for _, r := range w.RiverInfo {
-		if _, err := riverStmt.ExecContext(ctx, r.ID, r.Name); err != nil {
+		if _, err := riverStmt.ExecContext(ctx, r.ID, r.Name, r.Drainage); err != nil {
 			return fmt.Errorf("insert river info: %w", err)
 		}
 	}
