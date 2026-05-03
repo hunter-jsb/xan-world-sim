@@ -74,12 +74,23 @@ func Generate(seed int64, kya int) World {
 		for _, l := range lakes {
 			lakeSet[[2]int{int(l.X), int(l.Y)}] = true
 		}
+		// A geological basin renders as a *lake* only when the cell's
+		// temperature is above freezing. Below freezing, the basin
+		// holds ice — and our classifier already routes cold land to
+		// RegionGlacier, so non-glaciated cradle/foothill in basins
+		// is exactly the "liquid" case. Temperature is recomputed per
+		// cell because lapse rate makes higher cells colder than
+		// lower cells at the same latitude.
 		for i := range w.Regions {
 			rc := &w.Regions[i]
 			if !lakeSet[[2]int{int(rc.X), int(rc.Y)}] {
 				continue
 			}
-			if rc.RegionID == RegionCradle || rc.RegionID == RegionFoothill {
+			if rc.RegionID != RegionCradle && rc.RegionID != RegionFoothill {
+				continue
+			}
+			lat := Latitude(int(rc.Y), w.LatTop, w.LatBottom)
+			if Temperature(lat, rc.Elevation, climate) > 0 {
 				rc.RegionID = RegionLake
 			}
 		}

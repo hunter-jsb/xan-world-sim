@@ -80,23 +80,25 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 	accum := computeAccumulation(elev, bedrock, flowDir)
 	rivers, riverCells := traceRivers(bedrock, flowDir, accum, threshold, maxLen)
 
-	// Lakes: cells where the *filled* flow direction routes to a
-	// neighbor that's higher in *bedrock* — that's the algorithmic
-	// signature of a real-world basin floor. Pit-fill papered over
-	// the depression so flow could keep moving; lakes restore the
-	// depression to its natural visual identity.
+	// Lake detection is a SYSTEM, not a hand-tuned filter:
 	//
-	// Restricted to cradle/foothill (where rivers are too) and to
-	// cells with non-trivial accumulation, so we don't tag every
-	// random tiny depression as a lake.
-	lakeSet := make(map[[2]int]bool)
+	//   geological — a cell is a basin candidate if pit-fill papered
+	//                over a real concavity, i.e., its filled-flow
+	//                target is higher in bedrock than itself. That's
+	//                a direct algorithmic signature of a basin.
+	//   scale — at our grid (each cell ≈ 50km on a Mediterranean-
+	//           scale map), a single-cell candidate is sub-resolution
+	//           noise. Real lakes have to span multiple cells to
+	//           register. Cluster filter: a candidate becomes a lake
+	//           only when it has at least one candidate neighbor.
+	//   physics — frozen vs liquid is decided downstream in classify
+	//             via Temperature() > 0. We don't filter here by
+	//             climate; we just identify the geological feature.
+	candidates := make(map[[2]int]bool)
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
 			z := bedrock[y][x].Zone
 			if z != BZCradle && z != BZFoothill {
-				continue
-			}
-			if accum[y][x] < threshold/2 {
 				continue
 			}
 			d := flowDir[y][x]
@@ -111,7 +113,24 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 				continue
 			}
 			if bedrock[ny][nx].Elevation > bedrock[y][x].Elevation {
-				lakeSet[[2]int{x, y}] = true
+				candidates[[2]int{x, y}] = true
+			}
+		}
+	}
+	lakeSet := make(map[[2]int]bool)
+	for c := range candidates {
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				if candidates[[2]int{c[0] + dx, c[1] + dy}] {
+					lakeSet[c] = true
+					break
+				}
+			}
+			if lakeSet[c] {
+				break
 			}
 		}
 	}
