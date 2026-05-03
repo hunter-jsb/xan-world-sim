@@ -51,9 +51,9 @@ func TestGenerate_Snapshot(t *testing.T) {
 	}{
 		{KyaNow, 0, "d37dbe35e266d0a7a0b5e197be2d51d4d246c55a1d578eaf8a94414f9debad0c"},
 		{KyaNow, 42, "3aedd20a8d5f8470d870ae6834551d16eead0a064acf7155199e3c76fe809c93"},
-		{KyaOldWorld, 0, "947ccf4f48d2eb38d93dea5297eac233c64b9dbbc07d207894d8f1efc370d474"},
-		{KyaOldWorld, 42, "c7b0f758b5a2ce248c27ab2ccbc00302c19224a0124b55f1d418f6777bbce4df"},
-		{100, 42, "7417cea965a94ad3da777c43c270745c09f30c50ffa8ce5365fa1c8f21d4d1df"}, // mid-cycle
+		{KyaOldWorld, 0, "a03b5cc9e1b163d0b8d5904768e1f9527a673e63707cbf142931853703718602"},
+		{KyaOldWorld, 42, "5442f691b48270b6bb59667a240fe69113d856753d9b4a639ee88d59754100ef"},
+		{100, 42, "f209c804a28c2914e93067b07d5a2a4a2003261ec562063f4fdd78425db19daa"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c

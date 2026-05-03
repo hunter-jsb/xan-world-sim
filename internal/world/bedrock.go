@@ -1,6 +1,9 @@
 package world
 
-import "math/rand"
+import (
+	"math"
+	"math/rand"
+)
 
 // BedrockZone identifies the geological structure a cell belongs to.
 // Bedrock is era-independent — geology is stable over the timescales
@@ -68,31 +71,119 @@ func elevationForZone(z BedrockZone) float64 {
 	return 0
 }
 
+// Heightmap generation parameters. Tuned to give every land zone real
+// internal variation (so rivers will have downhill gradients to follow
+// in v2), while preserving the big drops at cliff/coastline boundaries.
+const (
+	smoothPasses    = 2     // box-filter passes; more = more diffuse
+	smoothThreshold = 500.0 // don't average across drops bigger than this — preserves cliffs and coasts
+	smoothWeight    = 0.3   // how strongly each pass blends self with neighborhood
+)
+
 func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 	mountainRow := genMountainRow(rng)
 	foothillThick := genFoothillThickness(rng)
 	coastX := genCoastX(rng)
 
+	// Phase 1: compute the bedrock zone for every cell.
+	zones := make([][]BedrockZone, Height)
+	for y := 0; y < Height; y++ {
+		zones[y] = make([]BedrockZone, Width)
+		for x := 0; x < Width; x++ {
+			zones[y][x] = bedrockZone(x, y, mountainRow, foothillThick, coastX)
+		}
+	}
+
+	// Phase 2: zone-base + per-cell noise. Each zone has its own
+	// noise amplitude — mountains are jagged (±500m), plateaus are
+	// rolling (±200m), cradle is gentle (±50m), shelves and basin
+	// floors get small noise (±15..100m). RNG order: y outer, x
+	// inner, every cell consumes one Float64.
+	elev := make([][]float64, Height)
+	for y := 0; y < Height; y++ {
+		elev[y] = make([]float64, Width)
+		for x := 0; x < Width; x++ {
+			base := elevationForZone(zones[y][x])
+			amp := zoneAmplitude(zones[y][x])
+			elev[y][x] = base + (rng.Float64()*2-1)*amp
+		}
+	}
+
+	// Phase 3: smoothing passes. For each cell, blend its elevation
+	// toward the average of its 8 neighbors — but only counting
+	// neighbors whose elevation is within smoothThreshold (so we
+	// preserve real terrain features: cliffs, mountain edges,
+	// coastlines all stay sharp). Within-zone noise gets smoothed
+	// into coherent gradients that water can flow down.
+	for pass := 0; pass < smoothPasses; pass++ {
+		next := make([][]float64, Height)
+		for y := 0; y < Height; y++ {
+			next[y] = make([]float64, Width)
+			for x := 0; x < Width; x++ {
+				self := elev[y][x]
+				sum, count := self, 1.0
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						nx, ny := x+dx, y+dy
+						if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+							continue
+						}
+						n := elev[ny][nx]
+						if math.Abs(n-self) > smoothThreshold {
+							continue
+						}
+						sum += n
+						count++
+					}
+				}
+				avg := sum / count
+				next[y][x] = self*(1-smoothWeight) + avg*smoothWeight
+			}
+		}
+		elev = next
+	}
+
+	// Phase 4: pack into BedrockCells.
 	out := make([][]BedrockCell, Height)
 	for y := 0; y < Height; y++ {
 		out[y] = make([]BedrockCell, Width)
 		for x := 0; x < Width; x++ {
-			z := bedrockZone(x, y, mountainRow, foothillThick, coastX)
-			elev := elevationForZone(z)
-			// Per-cell elevation jitter for shelf cells: ±15m
-			// deterministic noise. Without this, every coast cell is
-			// exactly -80m and every upland cell exactly -40m, so the
-			// shelf flips between submerged and exposed in a single
-			// step. With jitter, cells emerge/submerge at different sea
-			// levels — you get a ragged shoreline that creeps in/out
-			// across many kya, which reads naturally instead of binary.
-			if z == BZAgrariaShelf || z == BZAgrariaUpland {
-				elev += (rng.Float64()*2 - 1) * 15
-			}
-			out[y][x] = BedrockCell{Zone: z, Elevation: elev}
+			out[y][x] = BedrockCell{Zone: zones[y][x], Elevation: elev[y][x]}
 		}
 	}
 	return out
+}
+
+// zoneAmplitude is the maximum elevation deviation (in meters) added
+// as noise to cells of this zone. Calibrated to feel realistic for
+// the kind of terrain each zone represents.
+func zoneAmplitude(z BedrockZone) float64 {
+	switch z {
+	case BZPlateau:
+		return 200 // rolling tableland
+	case BZMountain:
+		return 500 // peaks and saddles
+	case BZCliff:
+		return 200 // jagged but constrained
+	case BZFoothill:
+		return 100 // hills, modest variation
+	case BZDoab:
+		return 200 // mountainous wedge
+	case BZCradle:
+		return 50 // mostly flat lowland
+	case BZBrineDeep:
+		return 100 // ocean floor variation
+	case BZAgrariaShelf:
+		return 15 // shelf surface — matches previous tuning
+	case BZAgrariaUpland:
+		return 15
+	case BZEastBasin:
+		return 50 // shallower basin floor
+	}
+	return 0
 }
 
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
