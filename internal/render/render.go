@@ -167,6 +167,7 @@ func elevTier(elev, base, amp float64) int {
 var (
 	emptyStyle = lipgloss.NewStyle()
 	riverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
+	roadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
 	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
@@ -174,9 +175,10 @@ var (
 const (
 	emptyGlyph = ' '
 	riverGlyph = ','
+	roadGlyph  = '·'
 )
 
-func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
+func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64) string {
 	width := int(maxX - minX + 1)
 	height := int(maxY - minY + 1)
 	if width <= 0 || height <= 0 {
@@ -199,6 +201,28 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 			g = '?'
 		}
 		grid[gy][gx] = styleFor(c.Kind, c.Elevation).Render(string(g))
+	}
+	// Roads paint over the base terrain but UNDER rivers and seats.
+	// We track which cells are roads so we can avoid overwriting them
+	// when rivers are drawn (rivers are more visually important).
+	// Skip cells where the underlying region is itself a settlement —
+	// the seat glyph already implies a road hub.
+	cellKind := make(map[[2]int64]string, len(cells))
+	for _, c := range cells {
+		cellKind[[2]int64{c.X, c.Y}] = c.Kind
+	}
+	roadCells := make(map[[2]int64]bool, len(roads))
+	for _, r := range roads {
+		gy, gx := int(r.Y-minY), int(r.X-minX)
+		if gy < 0 || gy >= height || gx < 0 || gx >= width {
+			continue
+		}
+		switch cellKind[[2]int64{r.X, r.Y}] {
+		case "seat", "march", "headwater", "outhold", "reach":
+			continue // seat glyph stays
+		}
+		roadCells[[2]int64{r.X, r.Y}] = true
+		grid[gy][gx] = roadStyle.Render(string(roadGlyph))
 	}
 	// Group river cells by river_id and sort by ord so we can derive
 	// the flow direction at each cell from its successor in the chain.
@@ -292,6 +316,7 @@ func Legend() string {
 	}, "   ")
 	row6 := strings.Join([]string{
 		item("pass", "pass"),
+		roadStyle.Render(string(roadGlyph)) + dimStyle.Render(" road"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5 + "\n" + row6
 }

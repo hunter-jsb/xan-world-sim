@@ -141,8 +141,12 @@ func (m model) regen(seed int64, kya int) tea.Cmd {
 		if err != nil {
 			return regenMsg{err: err}
 		}
+		roads, err := m.q.GetRoadCellsInBounds(m.ctx, m.minX, m.maxX, m.minY, m.maxY)
+		if err != nil {
+			return regenMsg{err: err}
+		}
 		return regenMsg{
-			mapStr: render.Grid(cells, rivers, m.minX, m.minY, m.maxX, m.maxY),
+			mapStr: render.Grid(cells, rivers, roads, m.minX, m.minY, m.maxX, m.maxY),
 			seed:   seed,
 			kya:    kya,
 			era:    w.Era,
@@ -241,8 +245,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("get river cells: %v", err)
 	}
+	roads, err := q.GetRoadCellsInBounds(ctx, minX, maxX, minY, maxY)
+	if err != nil {
+		log.Fatalf("get road cells: %v", err)
+	}
 
-	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
+	mapStr := render.Grid(cells, rivers, roads, minX, minY, maxX, maxY)
 
 	era := world.EraForKya(kya)
 
