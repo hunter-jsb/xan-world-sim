@@ -49,8 +49,8 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "8b300b198b76a9ddc8e146f1ff300609908b4a907ad194f3a58e9ea339292e0b"},
-		{KyaNow, 42, "22d11dcb352abc84605dc32c669bc58c0036860a1620f197145542a657db2711"},
+		{KyaNow, 0, "7fc4eaf67e93512f9eb1001843fc5e3f21b3e4fd41afb3c3a0bc07252eccec2f"},
+		{KyaNow, 42, "d9bfb7abfb566d29a6273596a2206ae864bc7afb7ad81f3e46eee80097fe5f15"},
 		{KyaOldWorld, 0, "f4e80634e55d17b2edb039ae89c862858816caac2be82e8fb279133edbbfb257"},
 		{KyaOldWorld, 42, "546003d704ed33b14aa5a98b8aaed49bb4bd2655b34f67d763d8029fbb2d756a"},
 		{100, 42, "022a2880ebe766d381c0f9b99653e4a6b20c2ad8e269c9ee092305918f81f22f"}, // mid-cycle

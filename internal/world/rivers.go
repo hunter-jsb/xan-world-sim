@@ -18,7 +18,11 @@ type River struct {
 // for our ~60x22 grid — high enough that only major drainages show.
 // At higher glacial indices, the effective threshold rises sharply
 // (riverThresholdFor below) so rivers fade out as ice accumulates.
-const riverBaseThreshold = 50
+//
+// Note: cells where pit-fill creates fake-uphill flow are filtered
+// out post-accumulation, so the effective river-cell count is lower
+// than raw accumulation suggests. Threshold tuned with that in mind.
+const riverBaseThreshold = 30
 
 // riverThresholdFor scales the river-accumulation threshold by the
 // current glacial state. The shape: very low when gI is near 0
@@ -227,7 +231,30 @@ func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, th
 	isRiver := make(map[[2]int]bool)
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
-			if accum[y][x] >= threshold && isRiverZone(bedrock[y][x].Zone) {
+			if accum[y][x] < threshold {
+				continue
+			}
+			if !isRiverZone(bedrock[y][x].Zone) {
+				continue
+			}
+			// Pit-fill raises basin cells in the working elevation
+			// field, so the D8 flow direction it produces can route
+			// water to a neighbor that's *higher* in actual bedrock —
+			// looks like a river flowing uphill. Drop those cells; in
+			// real terrain this would be a lake floor (water sits
+			// here, doesn't visibly flow). Sinks and off-map flows
+			// are kept (they're real outlets).
+			d := flowDir[y][x]
+			if d.dx == 0 && d.dy == 0 {
+				isRiver[[2]int{x, y}] = true
+				continue
+			}
+			nx, ny := x+d.dx, y+d.dy
+			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+				isRiver[[2]int{x, y}] = true
+				continue
+			}
+			if bedrock[ny][nx].Elevation <= bedrock[y][x].Elevation {
 				isRiver[[2]int{x, y}] = true
 			}
 		}
