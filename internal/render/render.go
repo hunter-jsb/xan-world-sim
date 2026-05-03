@@ -54,6 +54,7 @@ var glyphForKind = map[string]rune{
 	"march":          'M',
 	"headwater":      'Y',
 	"outhold":        'x',
+	"reach":          'R',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -116,6 +117,9 @@ var shadingByKind = map[string]kindShading{
 	// outhold — muted ochre, the off-grid catch-all; less imposing than
 	// the other seat tiers, suited to ranchers/prospectors/fugitives
 	"outhold":        {base: 200, amp: 200, colors: [5]string{"94", "130", "137", "172", "179"}},
+	// reach — bold magenta-violet, the frontier-explorer hold; visually
+	// distinct from earthier tiers since Reaches are exceptional & rare
+	"reach":          {base: 200, amp: 200, colors: [5]string{"54", "91", "127", "163", "207"}, bold: true},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -280,6 +284,7 @@ func Legend() string {
 		item("march", "march"),
 		item("headwater", "headwater"),
 		item("outhold", "outhold"),
+		item("reach", "reach"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5
 }

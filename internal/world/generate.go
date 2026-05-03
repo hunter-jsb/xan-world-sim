@@ -359,6 +359,124 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Reach — the frontier-explorer seat tier. "A seat at the far edge
+	// of crown reach... so remote it is essentially autonomous in
+	// practice. Crown couriers arrive late or never."
+	//
+	// Heartland is defined as the centroid of the Tributary seats —
+	// that's where the salmon-lord halls cluster, which is the crown's
+	// actual logistical reach. A Reach is among the K seat-eligible
+	// cells maximally far from this centroid, with greedy spatial
+	// dedup so different Reaches sit in different cardinal directions.
+	//
+	// K scales with the number of Tributaries (one Reach per ~3
+	// Tributaries, min 1 max 4) — a world with no heartland (no
+	// Tributaries, e.g., LGM) gets no Reaches; a world with a sprawling
+	// crown gets several frontier holds at its periphery.
+	{
+		var sumX, sumY float64
+		var nTrib int
+		for _, s := range w.Seats {
+			if s.Tier == RegionSeat {
+				sumX += float64(s.X)
+				sumY += float64(s.Y)
+				nTrib++
+			}
+		}
+		if nTrib > 0 {
+			cx := sumX / float64(nTrib)
+			cy := sumY / float64(nTrib)
+			seatAt := make(map[[2]int64]bool, len(w.Seats))
+			for _, s := range w.Seats {
+				seatAt[[2]int64{s.X, s.Y}] = true
+			}
+			type scored struct {
+				x, y int64
+				d    float64
+			}
+			var cands []scored
+			for i := range w.Regions {
+				rc := &w.Regions[i]
+				switch rc.RegionID {
+				case RegionCradle, RegionForest, RegionTundra, RegionFoothill:
+				default:
+					continue
+				}
+				if seatAt[[2]int64{rc.X, rc.Y}] {
+					continue
+				}
+				dx := float64(rc.X) - cx
+				dy := float64(rc.Y) - cy
+				cands = append(cands, scored{rc.X, rc.Y, dx*dx + dy*dy})
+			}
+			sort.Slice(cands, func(i, j int) bool {
+				if cands[i].d != cands[j].d {
+					return cands[i].d > cands[j].d
+				}
+				if cands[i].y != cands[j].y {
+					return cands[i].y < cands[j].y
+				}
+				return cands[i].x < cands[j].x
+			})
+			// K from Tributary count: one Reach per 3 Tributaries, at
+			// least 1 and at most 4. Grid-justified: minSep = 6 cells
+			// (~300km at our scale), the scale at which two distant
+			// frontier holds clearly belong to different "reaches" of
+			// crown rather than being neighbors.
+			k := nTrib / 3
+			if k < 1 {
+				k = 1
+			}
+			if k > 4 {
+				k = 4
+			}
+			const minSepSq = 6 * 6
+			var picks []scored
+			for _, c := range cands {
+				tooClose := false
+				for _, p := range picks {
+					ddx := c.x - p.x
+					ddy := c.y - p.y
+					if ddx*ddx+ddy*ddy < minSepSq {
+						tooClose = true
+						break
+					}
+				}
+				if tooClose {
+					continue
+				}
+				picks = append(picks, c)
+				if len(picks) >= k {
+					break
+				}
+			}
+			reachSet := make(map[[2]int64]bool, len(picks))
+			for _, p := range picks {
+				reachSet[[2]int64{p.x, p.y}] = true
+			}
+			for i := range w.Regions {
+				rc := &w.Regions[i]
+				if reachSet[[2]int64{rc.X, rc.Y}] {
+					rc.RegionID = RegionReach
+				}
+			}
+			sort.Slice(picks, func(i, j int) bool {
+				if picks[i].y != picks[j].y {
+					return picks[i].y < picks[j].y
+				}
+				return picks[i].x < picks[j].x
+			})
+			for _, p := range picks {
+				w.Seats = append(w.Seats, NamedSeat{
+					X:    p.x,
+					Y:    p.y,
+					Tier: RegionReach,
+					Name: generateName(nameSeedForCell(seed, p.x, p.y)),
+				})
+			}
+		}
+	}
+
 	// Outhold — the catch-all seat tier from the lore. "Off-river,
 	// off-grid, no formal frontier role." Detected as the strict
 	// local maxima of distance from any civilization (rivers + named
