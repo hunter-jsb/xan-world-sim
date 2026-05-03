@@ -34,6 +34,9 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM lakes"); err != nil {
 		return fmt.Errorf("clear lakes: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM passes"); err != nil {
+		return fmt.Errorf("clear passes: %w", err)
+	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
 		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
@@ -92,6 +95,18 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, l := range w.Lakes {
 		if _, err := lakeStmt.ExecContext(ctx, l.ID, l.Name, l.X, l.Y); err != nil {
 			return fmt.Errorf("insert lake: %w", err)
+		}
+	}
+
+	passStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO passes (id, name, x, y) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare pass: %w", err)
+	}
+	defer passStmt.Close()
+	for _, p := range w.Passes {
+		if _, err := passStmt.ExecContext(ctx, p.ID, p.Name, p.X, p.Y); err != nil {
+			return fmt.Errorf("insert pass: %w", err)
 		}
 	}
 

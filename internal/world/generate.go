@@ -605,6 +605,109 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Mountain passes — saddles in the ridge that bridge the cradle
+	// to the plateau. From the lore: "pre-Melt these were passable;
+	// the Melt made them spectacular and brutal." Detection signals:
+	//   1. The cell is itself a mountain (it sits *on* the ridge).
+	//   2. Its elevation is ≤ all 8-neighbor mountain cells (locally
+	//      lowest along the ridge axis — the saddle).
+	//   3. It has at least one foothill/cradle/forest/tundra cell to
+	//      its south — meaning the cradle side is reachable from
+	//      this point. Without (3) the saddle dead-ends inside the
+	//      mountain band and isn't a real "pass through."
+	// E/S tiebreaker on equal-elevation neighbors so a flat ridge-top
+	// doesn't yield clusters of passes.
+	{
+		regionAt := make(map[[2]int]int64, len(w.Regions))
+		elevAt := make(map[[2]int]float64, len(w.Regions))
+		for _, rc := range w.Regions {
+			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+		}
+		isApproachKind := func(id int64) bool {
+			return id == RegionFoothill || id == RegionCradle ||
+				id == RegionForest || id == RegionTundra ||
+				id == RegionMarsh
+		}
+		// 5x5 window for the local-min check: passes are "the lowest
+		// cell in the ridge for ~250km around" at our cell size.
+		// A 3x3 window over-counts because every short rise+dip in the
+		// smoothed elevation registers; 5x5 only flags cells that
+		// dominate a meaningful stretch of ridge.
+		const passWindow = 2
+		var picks [][2]int
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if rc.RegionID != RegionMountain {
+				continue
+			}
+			cx, cy := int(rc.X), int(rc.Y)
+			d := elevAt[[2]int{cx, cy}]
+			isMin := true
+			hasMtnNbr := false
+			hasApproach := false
+			for dy := -passWindow; dy <= passWindow && isMin; dy++ {
+				for dx := -passWindow; dx <= passWindow && isMin; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					n := [2]int{cx + dx, cy + dy}
+					nid, nok := regionAt[n]
+					if !nok {
+						continue
+					}
+					if nid == RegionMountain {
+						hasMtnNbr = true
+						nd := elevAt[n]
+						if nd < d {
+							isMin = false
+						} else if nd == d {
+							// E/S tiebreaker: lose ties to N/W
+							if dy < 0 || (dy == 0 && dx < 0) {
+								isMin = false
+							}
+						}
+					}
+					// "South approach" remains the immediate row below
+					// (we want a foothill/cradle directly accessible
+					// from the saddle, not several cells away).
+					if dy == 1 && (dx >= -1 && dx <= 1) && isApproachKind(nid) {
+						hasApproach = true
+					}
+				}
+			}
+			if isMin && hasMtnNbr && hasApproach {
+				picks = append(picks, [2]int{cx, cy})
+			}
+		}
+		sort.Slice(picks, func(i, j int) bool {
+			if picks[i][1] != picks[j][1] {
+				return picks[i][1] < picks[j][1]
+			}
+			return picks[i][0] < picks[j][0]
+		})
+		passSet := make(map[[2]int64]bool, len(picks))
+		for _, p := range picks {
+			passSet[[2]int64{int64(p[0]), int64(p[1])}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if passSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionPass
+			}
+		}
+		var nextID int64 = 1
+		for _, p := range picks {
+			w.Passes = append(w.Passes, PassInfo{
+				ID:   nextID,
+				Name: generateName(nameSeedForCell(seed, int64(p[0]), int64(p[1]))),
+				X:    int64(p[0]),
+				Y:    int64(p[1]),
+			})
+			nextID++
+		}
+	}
+
 	// Marsh: vegetated lowland directly adjacent to a water body, where
 	// temperature is above freezing. The "adjacency to water" criterion
 	// is the wet-biome definition; the temperature gate is the same

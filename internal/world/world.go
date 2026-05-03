@@ -30,6 +30,7 @@ const (
 	RegionHeadwater      int64 = 20
 	RegionOuthold        int64 = 21
 	RegionReach          int64 = 22
+	RegionPass           int64 = 23
 )
 
 type RegionCell struct {
@@ -63,6 +64,15 @@ type LakeInfo struct {
 	X, Y int64
 }
 
+// PassInfo names a mountain pass — a saddle in the ridge that bridges
+// the cradle to the plateau. One entry per RegionPass cell; the
+// detection guarantees passes don't cluster.
+type PassInfo struct {
+	ID   int64
+	Name string
+	X, Y int64
+}
+
 type World struct {
 	Seed int64
 
@@ -85,4 +95,5 @@ type World struct {
 	Rivers     []RiverCell // (river_id, x, y, ord)
 	Seats      []NamedSeat // settlements (Tributary, March, Headwater, Reach, Outhold)
 	Lakes      []LakeInfo  // named lake clusters (one per connected component)
+	Passes     []PassInfo  // mountain passes through the ridge
 }

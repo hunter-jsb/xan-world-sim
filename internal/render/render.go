@@ -55,6 +55,7 @@ var glyphForKind = map[string]rune{
 	"headwater":      'Y',
 	"outhold":        'x',
 	"reach":          'R',
+	"pass":           'V',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -120,6 +121,9 @@ var shadingByKind = map[string]kindShading{
 	// reach — bold magenta-violet, the frontier-explorer hold; visually
 	// distinct from earthier tiers since Reaches are exceptional & rare
 	"reach":          {base: 200, amp: 200, colors: [5]string{"54", "91", "127", "163", "207"}, bold: true},
+	// pass — yellow-stone, a saddle through the mountain ridge; bright
+	// against the surrounding gray mountains so passes stand out
+	"pass":           {base: 2500, amp: 300, colors: [5]string{"178", "214", "220", "229", "230"}, bold: true},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -286,5 +290,8 @@ func Legend() string {
 		item("outhold", "outhold"),
 		item("reach", "reach"),
 	}, "   ")
-	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5
+	row6 := strings.Join([]string{
+		item("pass", "pass"),
+	}, "   ")
+	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5 + "\n" + row6
 }
