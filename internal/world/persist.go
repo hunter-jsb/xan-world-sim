@@ -28,6 +28,9 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM region_cells"); err != nil {
 		return fmt.Errorf("clear regions: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM seats"); err != nil {
+		return fmt.Errorf("clear seats: %w", err)
+	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
 		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
@@ -62,6 +65,18 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, r := range w.Rivers {
 		if _, err := rvStmt.ExecContext(ctx, r.RiverID, r.X, r.Y, r.Ord); err != nil {
 			return fmt.Errorf("insert river cell: %w", err)
+		}
+	}
+
+	seatStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO seats (x, y, tier_id, name) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare seat: %w", err)
+	}
+	defer seatStmt.Close()
+	for _, s := range w.Seats {
+		if _, err := seatStmt.ExecContext(ctx, s.X, s.Y, s.Tier, s.Name); err != nil {
+			return fmt.Errorf("insert seat: %w", err)
 		}
 	}
 

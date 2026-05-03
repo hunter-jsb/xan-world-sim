@@ -279,6 +279,28 @@ func Generate(seed int64, kya int) World {
 				rc.RegionID = id
 			}
 		}
+		// Generate names for each seat. Seed mixes world seed with seat
+		// coords, so the same hall on the same world always carries the
+		// same name. Sorting by (y, x) before generating gives a stable
+		// emission order — important for snapshot determinism.
+		seatKeys := make([][2]int64, 0, len(seatSet))
+		for k := range seatSet {
+			seatKeys = append(seatKeys, k)
+		}
+		sort.Slice(seatKeys, func(i, j int) bool {
+			if seatKeys[i][1] != seatKeys[j][1] {
+				return seatKeys[i][1] < seatKeys[j][1]
+			}
+			return seatKeys[i][0] < seatKeys[j][0]
+		})
+		for _, k := range seatKeys {
+			w.Seats = append(w.Seats, NamedSeat{
+				X:    k[0],
+				Y:    k[1],
+				Tier: seatSet[k],
+				Name: generateName(nameSeedForCell(seed, k[0], k[1])),
+			})
+		}
 		// Filter river cells that landed on a seat — the directional
 		// river glyph would paint over the seat marker. River presence
 		// is implicit (the seat sits on it).

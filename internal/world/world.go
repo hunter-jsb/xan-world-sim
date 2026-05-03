@@ -42,6 +42,16 @@ type RiverCell struct {
 	Ord     int64
 }
 
+// NamedSeat is a settlement cell with a generated name. Each Tributary,
+// March, and Headwater hold gets one. The Tier carries which kind of
+// seat it is (RegionSeat / RegionMarch / RegionHeadwater) so render
+// and persistence layers can distinguish them.
+type NamedSeat struct {
+	X, Y int64
+	Tier int64
+	Name string
+}
+
 type World struct {
 	Seed int64
 
@@ -62,4 +72,5 @@ type World struct {
 	Regions    []RegionCell
 	RiverInfo  []River     // (id, name) — populated alongside Rivers
 	Rivers     []RiverCell // (river_id, x, y, ord)
+	Seats      []NamedSeat // settlements (Tributary, March, Headwater)
 }

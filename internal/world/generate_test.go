@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "0709d44ff339572db60697a8944dc4dd9bfeb66a02690cdb41ee5a20ef92554c"},
-		{KyaNow, 42, "fec699abd075e64509f4cbe099244e5c74b48bf45b4b040554ca85b179d92239"},
+		{KyaNow, 0, "11050b37d4e7c71a06e1c088f28fac9104c13732aa5290cc81fed937e2c5a687"},
+		{KyaNow, 42, "118339e3f185a5ffc8d57837ad2ad5f2e99c9865a5dac6fef022b2aedb603e7e"},
 		{KyaOldWorld, 0, "04cb6bbcaa54781ea2587529972919803669baef2bb8a2a66df65f5831e0d7af"},
 		{KyaOldWorld, 42, "7dde3191c7d91e428778e12a72a7f9168dc1802a5ee9eeb14bf75b70923c410a"},
-		{100, 42, "855d16bc2a20b778d76a965ab3c72b604d0a1b8938f20c82413299af43ddf655"}, // mid-cycle
+		{100, 42, "8714550a98766a6e61f6b51ba5adf826c4146a1bf35d6a7e552612a507324879"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -104,6 +104,18 @@ func hashWorld(w World) string {
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	for _, ri := range infos {
 		fmt.Fprintf(&b, "RI(%d,%s)|", ri.ID, ri.Name)
+	}
+
+	seats := make([]NamedSeat, len(w.Seats))
+	copy(seats, w.Seats)
+	sort.Slice(seats, func(i, j int) bool {
+		if seats[i].Y != seats[j].Y {
+			return seats[i].Y < seats[j].Y
+		}
+		return seats[i].X < seats[j].X
+	})
+	for _, s := range seats {
+		fmt.Fprintf(&b, "S(%d,%d,%d,%s)|", s.X, s.Y, s.Tier, s.Name)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))
