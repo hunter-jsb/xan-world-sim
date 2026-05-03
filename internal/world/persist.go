@@ -25,13 +25,13 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO region_cells (region_id, x, y) VALUES (?, ?, ?)")
+		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare region: %w", err)
 	}
 	defer rcStmt.Close()
 	for _, c := range w.Regions {
-		if _, err := rcStmt.ExecContext(ctx, c.RegionID, c.X, c.Y); err != nil {
+		if _, err := rcStmt.ExecContext(ctx, c.RegionID, c.X, c.Y, c.Elevation); err != nil {
 			return fmt.Errorf("insert region cell: %w", err)
 		}
 	}

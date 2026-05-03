@@ -18,31 +18,91 @@ var glyphForKind = map[string]rune{
 	"sea_brine":      '%',
 	"sea_eastern":    '~',
 	"glacier":        '*',
-	"agraria":        ';', // coast: lower shelf, marshy
-	"agraria_upland": '\'', // upland: higher, drier, exposes first
+	"agraria":        ';',
+	"agraria_upland": '\'',
 	"unknown":        '?',
 	"drowned":        '_',
 }
 
-var styleForKind = map[string]lipgloss.Style{
-	"plateau":     lipgloss.NewStyle().Foreground(lipgloss.Color("253")), // light gray (snow)
-	"mountain":    lipgloss.NewStyle().Foreground(lipgloss.Color("244")), // medium gray (stone)
-	"foothill":    lipgloss.NewStyle().Foreground(lipgloss.Color("100")), // olive (rolling)
-	"cliff":       lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true),
-	"cradle":      lipgloss.NewStyle().Foreground(lipgloss.Color("28")),  // green (fertile)
-	"doab":        lipgloss.NewStyle().Foreground(lipgloss.Color("94")),  // brown (rugged)
-	"sea_brine":   lipgloss.NewStyle().Foreground(lipgloss.Color("19")),  // deep blue (saline)
-	"sea_eastern": lipgloss.NewStyle().Foreground(lipgloss.Color("38")),  // cyan (fresh)
-	"glacier":        lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true), // pale icy
-	"agraria":        lipgloss.NewStyle().Foreground(lipgloss.Color("143")), // muted yellow-tan (lower coast — wetter)
-	"agraria_upland": lipgloss.NewStyle().Foreground(lipgloss.Color("179")), // brighter tan (upland — drier, grass)
-	"unknown":        lipgloss.NewStyle().Foreground(lipgloss.Color("99")),  // purple
-	"drowned":        lipgloss.NewStyle().Foreground(lipgloss.Color("60")),  // muted blue
+// kindShading describes per-kind elevation-driven coloring. The
+// renderer picks a tier (0..4) based on (elev - base) / amp, mapped
+// from -1..1 to one of the 5 ANSI codes — lower elevations get
+// darker shades, higher elevations get lighter ones. For zones
+// where elevation isn't meaningful (e.g., glacier paints whatever
+// is underneath at any temperature), shading still applies and
+// gives subtle texture.
+type kindShading struct {
+	base, amp float64
+	colors    [5]string // ANSI 256 codes, low → high
+	bold      bool      // applied to all tiers
+}
+
+var shadingByKind = map[string]kindShading{
+	// gray ramp — plateau: weathered stone → sun-bleached/snow-touched top
+	"plateau": {base: 1500, amp: 200, colors: [5]string{"248", "250", "253", "255", "231"}},
+	// stone gray ramp — mountains: dark base to light peaks
+	"mountain": {base: 3000, amp: 500, colors: [5]string{"238", "241", "244", "248", "252"}},
+	// stone, narrower band — cliffs are tall but constrained
+	"cliff": {base: 2500, amp: 200, colors: [5]string{"240", "243", "246", "249", "252"}, bold: true},
+	// olive/khaki ramp — foothills: dark grass-soil → drier/lighter highs
+	"foothill": {base: 500, amp: 100, colors: [5]string{"100", "107", "143", "179", "186"}},
+	// brown ramp — doab: dark earth → weathered rock
+	"doab": {base: 2000, amp: 200, colors: [5]string{"94", "130", "137", "180", "187"}},
+	// green ramp — cradle: shadowed forest → bright meadow
+	"cradle": {base: 100, amp: 50, colors: [5]string{"22", "28", "34", "70", "107"}},
+	// deep blue ramp — Brine: abyssal → shoaling
+	"sea_brine": {base: -800, amp: 100, colors: [5]string{"17", "18", "19", "20", "27"}},
+	// cyan ramp — Eastern Sea: deeper basin → shoals
+	"sea_eastern": {base: -150, amp: 50, colors: [5]string{"24", "31", "38", "45", "51"}},
+	// icy ramp — glacier
+	"glacier": {base: 0, amp: 1500, colors: [5]string{"152", "153", "159", "195", "231"}, bold: true},
+	// muted yellow-tan — Agraria coast (lower)
+	"agraria": {base: -80, amp: 15, colors: [5]string{"137", "143", "144", "179", "180"}},
+	// brighter tan — Agraria upland (higher)
+	"agraria_upland": {base: -40, amp: 15, colors: [5]string{"143", "179", "180", "215", "222"}},
+	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
+	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
+}
+
+// styleFor returns a lipgloss Style for a cell of the given kind at
+// the given elevation. Tier is computed from elev's deviation from
+// the kind's base, normalized by its amp. Cached per (kind, tier).
+func styleFor(kind string, elev float64) lipgloss.Style {
+	s, ok := shadingByKind[kind]
+	if !ok {
+		return lipgloss.NewStyle()
+	}
+	tier := elevTier(elev, s.base, s.amp)
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(s.colors[tier]))
+	if s.bold {
+		style = style.Bold(true)
+	}
+	return style
+}
+
+func elevTier(elev, base, amp float64) int {
+	if amp <= 0 {
+		return 2
+	}
+	norm := (elev - base) / amp // -1..1ish
+	if norm < -0.6 {
+		return 0
+	}
+	if norm < -0.2 {
+		return 1
+	}
+	if norm < 0.2 {
+		return 2
+	}
+	if norm < 0.6 {
+		return 3
+	}
+	return 4
 }
 
 var (
 	emptyStyle = lipgloss.NewStyle()
-	riverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true) // bright cyan
+	riverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
 	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
@@ -65,7 +125,6 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 			grid[i][j] = " "
 		}
 	}
-	// Layer 1: regions
 	for _, c := range cells {
 		gy, gx := int(c.Y-minY), int(c.X-minX)
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
@@ -75,13 +134,8 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 		if !ok {
 			g = '?'
 		}
-		style, ok := styleForKind[c.Kind]
-		if !ok {
-			style = emptyStyle
-		}
-		grid[gy][gx] = style.Render(string(g))
+		grid[gy][gx] = styleFor(c.Kind, c.Elevation).Render(string(g))
 	}
-	// Layer 2: rivers (overlaid)
 	for _, r := range rivers {
 		gy, gx := int(r.Y-minY), int(r.X-minX)
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
@@ -107,7 +161,12 @@ func Title(s string) string {
 func Legend() string {
 	item := func(kind string, label string) string {
 		g := glyphForKind[kind]
-		st := styleForKind[kind]
+		s := shadingByKind[kind]
+		// Use mid tier for legend swatch.
+		st := lipgloss.NewStyle().Foreground(lipgloss.Color(s.colors[2]))
+		if s.bold {
+			st = st.Bold(true)
+		}
 		return st.Render(string(g)) + dimStyle.Render(" "+label)
 	}
 	row1 := strings.Join([]string{

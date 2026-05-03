@@ -36,10 +36,14 @@ func Generate(seed int64, kya int) World {
 	for y := 0; y < Height; y++ {
 		lat := Latitude(y, w.LatTop, w.LatBottom)
 		for x := 0; x < Width; x++ {
-			rid := classify(bedrock[y][x], lat, climate)
+			b := bedrock[y][x]
+			rid := classify(b, lat, climate)
 			if rid > 0 {
 				w.Regions = append(w.Regions, RegionCell{
-					RegionID: rid, X: int64(x), Y: int64(y),
+					RegionID:  rid,
+					X:         int64(x),
+					Y:         int64(y),
+					Elevation: b.Elevation,
 				})
 			}
 		}

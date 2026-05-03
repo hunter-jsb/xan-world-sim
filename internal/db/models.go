@@ -11,9 +11,10 @@ type Region struct {
 }
 
 type RegionCell struct {
-	RegionID int64 `json:"region_id"`
-	X        int64 `json:"x"`
-	Y        int64 `json:"y"`
+	RegionID  int64   `json:"region_id"`
+	X         int64   `json:"x"`
+	Y         int64   `json:"y"`
+	Elevation float64 `json:"elevation"`
 }
 
 type River struct {
@@ -26,4 +27,9 @@ type RiverCell struct {
 	X       int64 `json:"x"`
 	Y       int64 `json:"y"`
 	Ord     int64 `json:"ord"`
+}
+
+type WorldMetum struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }

@@ -24,8 +24,9 @@ const (
 )
 
 type RegionCell struct {
-	RegionID int64
-	X, Y     int64
+	RegionID  int64
+	X, Y      int64
+	Elevation float64 // bedrock elevation (m), persisted for renderer shading
 }
 
 type RiverCell struct {
