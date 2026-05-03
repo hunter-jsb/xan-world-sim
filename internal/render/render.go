@@ -21,6 +21,8 @@ var glyphForKind = map[string]rune{
 	"agraria":        ';',
 	"agraria_upland": '\'',
 	"lake":           'o',
+	"forest":         'T',
+	"tundra":         '`',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -64,6 +66,11 @@ var shadingByKind = map[string]kindShading{
 	// lake — pale blue, distinct from rivers (bright bold cyan) so
 	// you can see lakes adjacent to rivers
 	"lake": {base: 100, amp: 50, colors: [5]string{"31", "38", "45", "81", "117"}, bold: true},
+	// forest — darker green than cradle's grassland-y default; bumpy
+	// canopy reads against `T` glyph
+	"forest": {base: 100, amp: 50, colors: [5]string{"22", "28", "29", "65", "71"}},
+	// tundra — pale gray-green; cold and sparse
+	"tundra": {base: 100, amp: 50, colors: [5]string{"101", "108", "144", "145", "151"}},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -191,5 +198,9 @@ func Legend() string {
 		item("agraria_upland", "agraria upland"),
 		item("lake", "lake"),
 	}, "   ")
-	return row1 + "\n" + row2 + "\n" + row3
+	row4 := strings.Join([]string{
+		item("forest", "forest"),
+		item("tundra", "tundra"),
+	}, "   ")
+	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4
 }

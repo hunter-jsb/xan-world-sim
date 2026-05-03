@@ -95,6 +95,37 @@ func Generate(seed int64, kya int) World {
 			}
 		}
 	}
+
+	// Biome refinement: split bare cradle cells by temperature into
+	// forest (cool temperate) or tundra (cold but unfrozen). The two
+	// gates are real ecological transitions:
+	//   0°C  — water freezes year-round; below this trees can't sustain
+	//          a closed canopy and we're in tundra territory.
+	//   15°C — closed temperate forest gives way to warmer
+	//          grassland/maquis above this. (Real-world MAT for the
+	//          temperate-warm transition; matches our cradle's
+	//          intended Mediterranean flavor at warmer values.)
+	// Foothills keep their topographic identity (the `n` glyph
+	// represents *hills*, not vegetation) so we don't biome-shift them.
+	const (
+		freezePoint     = 0.0
+		warmCradleStart = 15.0
+	)
+	for i := range w.Regions {
+		rc := &w.Regions[i]
+		if rc.RegionID != RegionCradle {
+			continue
+		}
+		lat := Latitude(int(rc.Y), w.LatTop, w.LatBottom)
+		t := Temperature(lat, rc.Elevation, climate)
+		switch {
+		case t < freezePoint:
+			rc.RegionID = RegionTundra
+		case t < warmCradleStart:
+			rc.RegionID = RegionForest
+		}
+	}
+
 	return w
 }
 
