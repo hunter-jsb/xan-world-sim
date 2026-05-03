@@ -1019,7 +1019,7 @@ func genCoastX(rng *rand.Rand) []int {
 	for y := 0; y < Height; y++ {
 		jitter += rng.Intn(3) - 1
 		jitter = clamp(jitter, -2, 2)
-		out[y] = clamp(52+jitter, 50, 56)
+		out[y] = clamp(70+jitter, 67, 75)
 	}
 	return out
 }

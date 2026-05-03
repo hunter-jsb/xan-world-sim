@@ -4,8 +4,8 @@
 package world
 
 const (
-	Width  = 60
-	Height = 22
+	Width  = 80
+	Height = 30
 
 	// Region IDs match the ones inserted by the migrations.
 	RegionPlateau    int64 = 1

@@ -26,17 +26,17 @@ const (
 	BZEastBasin     // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
 )
 
-// Map allocation along x:
-//   x =  0..2  : Brine deep (always submerged — gives the shoreline real
+// Map allocation along x (scaled for Width=80):
+//   x =  0..3  : Brine deep (always submerged — gives the shoreline real
 //                visible water to retreat from / advance into)
-//   x =  3     : Agraria coast (deeper shelf, exposes later)
-//   x =  4..5  : Agraria upland (higher shelf, exposes first, tapers
+//   x =  4     : Agraria coast (deeper shelf, exposes later)
+//   x =  5..6  : Agraria upland (higher shelf, exposes first, tapers
 //                in y to suggest a natural wedge against the plateau)
-//   x =  6..51 : Land (plateau / mountain / foothill / cradle / doab)
-//   x = 52..59 : Eastern Sea (unchanged)
+//   x =  7..69 : Land (plateau / mountain / foothill / cradle / doab)
+//   x = 70..79 : Eastern Sea
 const (
-	landStartX  = 6
-	agrariaCoastX = 3
+	landStartX    = 8
+	agrariaCoastX = 4
 )
 
 // BedrockCell is the era-independent geology at one (x,y) position.
@@ -187,29 +187,29 @@ func zoneAmplitude(z BedrockZone) float64 {
 }
 
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
-	// West water/shelf strip: 3 cols of pure Brine + 3 cols of shelf.
+	// West water/shelf strip: 4 cols of pure Brine + 3 cols of shelf.
 	// At kya=0 the shelf is submerged → entire strip reads as Brine;
 	// at glacial peak the shelf emerges and the strip is half water /
 	// half land. The shoreline literally lives on this strip.
-	if x <= 2 {
+	if x <= 3 {
 		return BZBrineDeep
 	}
 	if x == agrariaCoastX {
-		if y >= 2 && y <= 19 {
+		if y >= 2 && y <= 26 {
 			return BZAgrariaShelf
 		}
 		return BZBrineDeep
 	}
-	if x == 4 {
-		if y >= 2 && y <= 16 {
+	if x == 5 {
+		if y >= 2 && y <= 22 {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
 	}
-	if x == 5 {
-		// Tapered upland — narrower than x=4, suggests the shelf
+	if x == 6 {
+		// Tapered upland — narrower than x=5, suggests the shelf
 		// thinning out as it approaches the plateau cliff base.
-		if y >= 4 && y <= 14 {
+		if y >= 5 && y <= 19 {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
@@ -220,13 +220,13 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 		return BZEastBasin
 	}
 
-	// Inland (x=6..51)
+	// Inland (x=7..69)
 	mr := mountainRow[x]
 	if mr >= 0 && y < mr {
 		return BZPlateau
 	}
 	if mr >= 0 && y == mr {
-		if x <= 15 {
+		if x <= 20 {
 			return BZCliff
 		}
 		return BZMountain
@@ -238,48 +238,49 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 }
 
 // baseMountainRow returns the y-row of the mountain band at column x
-// (or -1 if there is no mountain at this column). All ranges shifted
-// east by 4 from the original layout — the easternmost band (mr=2)
-// would have collided with the Eastern Sea so it's dropped.
+// (or -1 if there is no mountain at this column). The Rift slopes
+// NE→SW: at the eastern end the mountains sit higher (lower Y), at
+// the western SW end they drop to a lower row, encoding the cliff →
+// barrier → foothill blend from the lore. Scaled for 80×30.
 func baseMountainRow(x int) int {
 	switch {
-	case x >= 48 && x <= 51:
-		return 3
-	case x >= 44 && x <= 47:
+	case x >= 64 && x <= 68:
 		return 4
-	case x >= 40 && x <= 43:
+	case x >= 59 && x <= 63:
 		return 5
-	case x >= 36 && x <= 39:
-		return 6
-	case x >= 32 && x <= 35:
+	case x >= 53 && x <= 58:
 		return 7
-	case x >= 28 && x <= 31:
+	case x >= 48 && x <= 52:
 		return 8
-	case x >= 24 && x <= 27:
-		return 9
-	case x >= 20 && x <= 23:
+	case x >= 43 && x <= 47:
 		return 10
-	case x >= 16 && x <= 19:
+	case x >= 37 && x <= 42:
 		return 11
-	case x >= 12 && x <= 15:
+	case x >= 32 && x <= 36:
 		return 12
-	case x >= 8 && x <= 11:
-		return 13
-	case x >= 6 && x <= 7:
+	case x >= 27 && x <= 31:
 		return 14
+	case x >= 21 && x <= 26:
+		return 15
+	case x >= 16 && x <= 20:
+		return 16
+	case x >= 11 && x <= 15:
+		return 18
+	case x >= 8 && x <= 10:
+		return 19
 	}
 	return -1
 }
 
 func baseFoothillThickness(x int) int {
 	switch {
-	case x >= 6 && x <= 15:
+	case x >= 8 && x <= 20:
 		return 0
-	case x >= 16 && x <= 27:
+	case x >= 21 && x <= 36:
 		return 1
-	case x >= 28 && x <= 39:
+	case x >= 37 && x <= 52:
 		return 2
-	case x >= 40 && x <= 51:
+	case x >= 53 && x <= 68:
 		return 3
 	}
 	return 0
