@@ -9,10 +9,13 @@ march south, then everything reverses.
 ## Run
 
 ```bash
-goose -dir migrations sqlite3 world.db up    # one-time schema
-go run ./cmd/seedgen --seed 42 --kya 0       # generate a world
-go run ./cmd/sim                             # explore it
+go run ./cmd/sim
 ```
+
+That's it. The sim auto-applies the embedded schema migrations and
+generates a world from `world_meta` (default seed=0, kya=0) on first
+launch. For batch / scripted use, `go run ./cmd/seedgen --seed N
+--kya N` writes a specific world to the DB without launching the TUI.
 
 In the TUI:
 

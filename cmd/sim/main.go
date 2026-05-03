@@ -12,9 +12,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
 	"github.com/hunterjsb/xan-world-sim/internal/db"
+	"github.com/hunterjsb/xan-world-sim/internal/migrations"
 	"github.com/hunterjsb/xan-world-sim/internal/render"
 	"github.com/hunterjsb/xan-world-sim/internal/world"
 )
@@ -197,6 +199,18 @@ func main() {
 
 	if err := conn.Ping(); err != nil {
 		log.Fatalf("ping db: %v", err)
+	}
+
+	// Auto-apply schema migrations from the embedded FS. Idempotent —
+	// goose tracks which migrations have already run. Means a fresh
+	// world.db (or no world.db) is fully bootstrapped just by running
+	// `go run ./cmd/sim`; no separate goose CLI step required.
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		log.Fatalf("goose dialect: %v", err)
+	}
+	if err := goose.Up(conn, "."); err != nil {
+		log.Fatalf("apply migrations: %v", err)
 	}
 
 	q := db.New(conn)
