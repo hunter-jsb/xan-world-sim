@@ -32,6 +32,7 @@ const (
 	RegionReach          int64 = 22
 	RegionPass           int64 = 23
 	RegionDragonDen      int64 = 24
+	RegionDrakeNest      int64 = 25
 )
 
 type RegionCell struct {
@@ -91,6 +92,18 @@ type DenInfo struct {
 	Elevation float64
 }
 
+// NestInfo names a drake nest — a foothill cell at strict local
+// elevation max. Lore: drakes "den lower and more variably — caves
+// at the foothill level." More numerous than dragon dens; min-sep
+// is half (4 cells / ~200km) to reflect drakes being "the everyday
+// menace" rather than the rare apex.
+type NestInfo struct {
+	ID        int64
+	Name      string
+	X, Y      int64
+	Elevation float64
+}
+
 // Road is one trade route — from a non-Tributary seat to its nearest
 // Tributary, traced via Dijkstra over terrain. Rivers serve as the
 // inter-Tributary spine implicitly (the lore: "the river physically
@@ -135,4 +148,5 @@ type World struct {
 	Roads      []Road      // trade routes from each non-Tributary seat
 	RoadCells  []RoadCell  // cells along each road
 	Dens       []DenInfo   // dragon dens at mountain peaks
+	Nests      []NestInfo  // drake nests at foothill peaks
 }

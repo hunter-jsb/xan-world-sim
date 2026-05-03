@@ -827,6 +827,104 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Drake nests — the lesser cousin of dragon dens. Lore: drakes
+	// "den lower and more variably — caves at the foothill level."
+	// Detection mirrors dragon dens but on RegionFoothill cells, with
+	// half the spatial separation since drakes are "the everyday
+	// menace" — denser than dragons.
+	{
+		const nestWindow = 2
+		const nestMinSepSq = 4 * 4
+		regionAt := make(map[[2]int]int64, len(w.Regions))
+		elevAt := make(map[[2]int]float64, len(w.Regions))
+		for _, rc := range w.Regions {
+			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+		}
+		type nestCand struct {
+			x, y int
+			elev float64
+		}
+		var cands []nestCand
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if rc.RegionID != RegionFoothill {
+				continue
+			}
+			cx, cy := int(rc.X), int(rc.Y)
+			d := elevAt[[2]int{cx, cy}]
+			isMax := true
+			for dy := -nestWindow; dy <= nestWindow && isMax; dy++ {
+				for dx := -nestWindow; dx <= nestWindow && isMax; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					n := [2]int{cx + dx, cy + dy}
+					if regionAt[n] != RegionFoothill {
+						continue
+					}
+					nd := elevAt[n]
+					if nd > d {
+						isMax = false
+					} else if nd == d {
+						if dy < 0 || (dy == 0 && dx < 0) {
+							isMax = false
+						}
+					}
+				}
+			}
+			if isMax {
+				cands = append(cands, nestCand{cx, cy, d})
+			}
+		}
+		sort.Slice(cands, func(i, j int) bool {
+			if cands[i].elev != cands[j].elev {
+				return cands[i].elev > cands[j].elev
+			}
+			if cands[i].y != cands[j].y {
+				return cands[i].y < cands[j].y
+			}
+			return cands[i].x < cands[j].x
+		})
+		var picks []nestCand
+		for _, c := range cands {
+			tooClose := false
+			for _, p := range picks {
+				dx := c.x - p.x
+				dy := c.y - p.y
+				if dx*dx+dy*dy < nestMinSepSq {
+					tooClose = true
+					break
+				}
+			}
+			if tooClose {
+				continue
+			}
+			picks = append(picks, c)
+		}
+		nestSet := make(map[[2]int64]bool, len(picks))
+		for _, p := range picks {
+			nestSet[[2]int64{int64(p.x), int64(p.y)}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if nestSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionDrakeNest
+			}
+		}
+		var nextID int64 = 1
+		for _, p := range picks {
+			w.Nests = append(w.Nests, NestInfo{
+				ID:        nextID,
+				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
+				X:         int64(p.x),
+				Y:         int64(p.y),
+				Elevation: p.elev,
+			})
+			nextID++
+		}
+	}
+
 	// Dragon pressure — per-seat exposure to dragon raids. Lore:
 	// "Northern kingdoms — those nestled up against the Mountain
 	// Barrier — live under constant dragon pressure... Risk falls off

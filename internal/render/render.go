@@ -57,6 +57,7 @@ var glyphForKind = map[string]rune{
 	"reach":          'R',
 	"pass":           'V',
 	"den":            'D',
+	"nest":           'd',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -128,6 +129,9 @@ var shadingByKind = map[string]kindShading{
 	// den — blood-crimson, the dragon's lair; deeper red at higher
 	// elevation since the great dens sit at the loftiest peaks
 	"den":            {base: 3000, amp: 500, colors: [5]string{"88", "124", "160", "196", "9"}, bold: true},
+	// nest — orange-rust, drake's lair; less imposing than the
+	// dragon's blood-red but in the same warning-color family
+	"nest":           {base: 500, amp: 200, colors: [5]string{"94", "130", "166", "172", "208"}},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -321,6 +325,7 @@ func Legend() string {
 	row6 := strings.Join([]string{
 		item("pass", "pass"),
 		item("den", "dragon den"),
+		item("nest", "drake nest"),
 		roadStyle.Render(string(roadGlyph)) + dimStyle.Render(" road"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5 + "\n" + row6

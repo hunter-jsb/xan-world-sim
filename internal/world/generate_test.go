@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "c77ea6f4e017d06703b1ed621bbbbd1e1204776dfe7c5118670096f87b601b92"},
-		{KyaNow, 42, "a79df4e4f1fa98e60fe7b5894a444eec6cd98a82e496dd6f3f4207e54b807229"},
+		{KyaNow, 0, "99bf720cc9b74c1f336111febefec5a842155088d7229327f432a6956dcd9781"},
+		{KyaNow, 42, "2ea6b21a5beb5761b37ec175c8fd52b623766978384f0b64795442501ac54ef6"},
 		{KyaOldWorld, 0, "9012e732bee5f7f022be24434dff37bfb6b0644cd74a43880a81cda78ae9b6b0"},
 		{KyaOldWorld, 42, "f8fba88398f512463ee935e56e1cb69ea05ee83afea7e1ee657c82c8a234ca3f"},
-		{100, 42, "54bd47437c71c53f85aa429f9e6332edffe86f56e1cd90389a8bf1ecaeb8fc13"}, // mid-cycle
+		{100, 42, "0a879d2b44757a9816c8c87db71afc5a5636de997986bb5fd0c8220967b18df3"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -155,6 +155,13 @@ func hashWorld(w World) string {
 	sort.Slice(dens, func(i, j int) bool { return dens[i].ID < dens[j].ID })
 	for _, d := range dens {
 		fmt.Fprintf(&b, "D(%d,%d,%d,%.1f,%s)|", d.ID, d.X, d.Y, d.Elevation, d.Name)
+	}
+
+	nests := make([]NestInfo, len(w.Nests))
+	copy(nests, w.Nests)
+	sort.Slice(nests, func(i, j int) bool { return nests[i].ID < nests[j].ID })
+	for _, n := range nests {
+		fmt.Fprintf(&b, "N(%d,%d,%d,%.1f,%s)|", n.ID, n.X, n.Y, n.Elevation, n.Name)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))
