@@ -174,7 +174,6 @@ func Legend() string {
 		item("mountain", "mountain"),
 		item("foothill", "foothill"),
 		item("cliff", "cliff"),
-		item("doab", "doab"),
 	}, "   ")
 	row2 := strings.Join([]string{
 		item("cradle", "cradle"),

@@ -231,9 +231,6 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 		}
 		return BZMountain
 	}
-	if isDoab(x, y) {
-		return BZDoab
-	}
 	if mr >= 0 && y > mr && y <= mr+foothillThick[x] {
 		return BZFoothill
 	}
@@ -288,13 +285,3 @@ func baseFoothillThickness(x int) int {
 	return 0
 }
 
-// isDoab — shifted east by 4 from old coords (was x=18..21).
-func isDoab(x, y int) bool {
-	if x >= 22 && x <= 25 && (y == 11 || y == 12) {
-		return true
-	}
-	if x >= 22 && x <= 24 && y == 13 {
-		return true
-	}
-	return false
-}

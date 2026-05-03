@@ -13,11 +13,28 @@ type River struct {
 	Name string
 }
 
-// riverThreshold is the flow accumulation a cell needs to be marked
-// as a river. Tuned for our ~60x22 grid: high enough that only the
-// major drainages light up, not every minor rivulet. If you change
-// map dimensions or generate-rain rules, retune.
-const riverThreshold = 50
+// riverBaseThreshold is the flow accumulation a cell needs to be
+// marked as a river *at full warm climate* (glacial index = 0). Tuned
+// for our ~60x22 grid — high enough that only major drainages show.
+// At higher glacial indices, the effective threshold rises sharply
+// (riverThresholdFor below) so rivers fade out as ice accumulates.
+const riverBaseThreshold = 50
+
+// riverThresholdFor scales the river-accumulation threshold by the
+// current glacial state. The shape: very low when gI is near 0
+// (interglacial — full rivers), rising past hand-laid base values as
+// the Melt rolls back, effectively infinite at gI=1 (full glacial —
+// no rivers, water locked in ice).
+//
+// Concretely: cells emerge as rivers in the late stages of the Melt
+// (kya ~15–25) rather than at an arbitrary half-cycle gate.
+func riverThresholdFor(gI float64) int {
+	if gI >= 0.85 {
+		return 1 << 20 // sentinel: nothing qualifies as a river
+	}
+	scale := 1 + 30*gI*gI // ramps fast as gI grows
+	return int(float64(riverBaseThreshold) * scale)
+}
 
 // flowRivers runs a D8 flow-direction + flow-accumulation pass on the
 // bedrock heightmap and returns the procgen-derived rivers. Each
@@ -31,7 +48,7 @@ const riverThreshold = 50
 // Step 3: trace — cells with accumulation >= threshold are river cells;
 // each headwater becomes its own river_id, terminating where it
 // reaches a previously-traced cell or leaves land.
-func flowRivers(bedrock [][]BedrockCell) ([]River, []RiverCell) {
+func flowRivers(bedrock [][]BedrockCell, threshold int) ([]River, []RiverCell) {
 	// Copy bedrock elevations into a fillable working field. We'll
 	// raise pits in this copy without modifying bedrock — bedrock
 	// stays the source of truth for visualization and sea checks.
@@ -46,7 +63,7 @@ func flowRivers(bedrock [][]BedrockCell) ([]River, []RiverCell) {
 
 	flowDir := computeFlowDirections(elev)
 	accum := computeAccumulation(elev, bedrock, flowDir)
-	return traceRivers(bedrock, flowDir, accum)
+	return traceRivers(bedrock, flowDir, accum, threshold)
 }
 
 // fillPits raises depressions in the heightmap so every land cell has
@@ -195,9 +212,9 @@ func computeAccumulation(elev [][]float64, bedrock [][]BedrockCell, flowDir [][]
 	return accum
 }
 
-func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int) ([]River, []RiverCell) {
+func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, threshold int) ([]River, []RiverCell) {
 	// Only paint cells as rivers in zones where rivers visually
-	// belong — cradle, foothill, doab. Plateau and mountain accumulate
+	// belong — cradle, foothill. Plateau and mountain accumulate
 	// flow too, but their drainage in our 2D model often runs off the
 	// north/south edges (no real-world equivalent of erosion-cut
 	// gorges through the mountain ridge). Hiding rivers in those
@@ -205,12 +222,12 @@ func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int) ([
 	// at the mountain-base foothills, crossing the cradle, exiting
 	// at sea — without the plateau-top artifacts.
 	isRiverZone := func(z BedrockZone) bool {
-		return z == BZCradle || z == BZFoothill || z == BZDoab
+		return z == BZCradle || z == BZFoothill
 	}
 	isRiver := make(map[[2]int]bool)
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
-			if accum[y][x] >= riverThreshold && isRiverZone(bedrock[y][x].Zone) {
+			if accum[y][x] >= threshold && isRiverZone(bedrock[y][x].Zone) {
 				isRiver[[2]int{x, y}] = true
 			}
 		}
