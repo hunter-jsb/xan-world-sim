@@ -647,6 +647,67 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Lake naming — runs last so any cells that became seats during
+	// transformations are excluded from the BFS. Each connected cluster
+	// of RegionLake cells gets one name, seeded from the cluster's lex-
+	// smallest cell. A lake fragmented by a settlement (rare; happens
+	// when a Tributary sits on a lake-cell river bend) yields two
+	// names — geologically that's now two lakes.
+	{
+		lakeAt := make(map[[2]int]bool)
+		for _, rc := range w.Regions {
+			if rc.RegionID == RegionLake {
+				lakeAt[[2]int{int(rc.X), int(rc.Y)}] = true
+			}
+		}
+		var keys [][2]int
+		for k := range lakeAt {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i][1] != keys[j][1] {
+				return keys[i][1] < keys[j][1]
+			}
+			return keys[i][0] < keys[j][0]
+		})
+		visited := make(map[[2]int]bool)
+		var nextID int64 = 1
+		for _, start := range keys {
+			if visited[start] {
+				continue
+			}
+			rep := start
+			queue := [][2]int{start}
+			visited[start] = true
+			for len(queue) > 0 {
+				h := queue[0]
+				queue = queue[1:]
+				if h[1] < rep[1] || (h[1] == rep[1] && h[0] < rep[0]) {
+					rep = h
+				}
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						n := [2]int{h[0] + dx, h[1] + dy}
+						if lakeAt[n] && !visited[n] {
+							visited[n] = true
+							queue = append(queue, n)
+						}
+					}
+				}
+			}
+			w.Lakes = append(w.Lakes, LakeInfo{
+				ID:   nextID,
+				Name: generateName(nameSeedForCell(seed, int64(rep[0]), int64(rep[1]))),
+				X:    int64(rep[0]),
+				Y:    int64(rep[1]),
+			})
+			nextID++
+		}
+	}
+
 	return w
 }
 

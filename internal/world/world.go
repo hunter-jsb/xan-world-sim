@@ -54,6 +54,15 @@ type NamedSeat struct {
 	Name string
 }
 
+// LakeInfo names a lake — one entry per connected cluster of RegionLake
+// cells. X, Y is a representative cell (lex-smallest in the cluster) so
+// downstream consumers can highlight the lake on a map.
+type LakeInfo struct {
+	ID   int64
+	Name string
+	X, Y int64
+}
+
 type World struct {
 	Seed int64
 
@@ -74,5 +83,6 @@ type World struct {
 	Regions    []RegionCell
 	RiverInfo  []River     // (id, name) — populated alongside Rivers
 	Rivers     []RiverCell // (river_id, x, y, ord)
-	Seats      []NamedSeat // settlements (Tributary, March, Headwater)
+	Seats      []NamedSeat // settlements (Tributary, March, Headwater, Reach, Outhold)
+	Lakes      []LakeInfo  // named lake clusters (one per connected component)
 }
