@@ -56,9 +56,34 @@ func Generate(seed int64, kya int) World {
 	// locked in ice). As warming progresses, headwaters appear first,
 	// then rivers extend downstream. By the time the cycle is fully
 	// warm, rivers reach all the way from headwater to sea.
-	w.RiverInfo, w.Rivers = flowRivers(bedrock,
+	//
+	// Lakes are a side-product: cells where pit-fill identified a
+	// basin floor (flow target is higher in bedrock terms). Convert
+	// eligible cradle/foothill cells in-place so the renderer paints
+	// them as lakes. Cells that are currently glaciated (e.g., at the
+	// glacial peak when the cradle is under ice) keep their glacier
+	// classification — lakes are buried until the ice retreats, which
+	// is geologically correct.
+	var lakes []LakeCell
+	w.RiverInfo, w.Rivers, lakes = flowRivers(bedrock,
 		riverThreshold,
 		riverMaxLenFor(climate.GlacialIndex))
+
+	if len(lakes) > 0 {
+		lakeSet := make(map[[2]int]bool, len(lakes))
+		for _, l := range lakes {
+			lakeSet[[2]int{int(l.X), int(l.Y)}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if !lakeSet[[2]int{int(rc.X), int(rc.Y)}] {
+				continue
+			}
+			if rc.RegionID == RegionCradle || rc.RegionID == RegionFoothill {
+				rc.RegionID = RegionLake
+			}
+		}
+	}
 	return w
 }
 

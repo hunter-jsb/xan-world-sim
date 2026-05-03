@@ -57,7 +57,13 @@ func riverMaxLenFor(gI float64) int {
 // Step 3: trace — cells with accumulation >= threshold are river cells;
 // each headwater becomes its own river_id, terminating where it
 // reaches a previously-traced cell or leaves land.
-func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell) {
+// LakeCell is a single cell of a lake — a basin floor in the bedrock
+// where pit-fill detected that flow would have to route uphill.
+type LakeCell struct {
+	X, Y int64
+}
+
+func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell, []LakeCell) {
 	// Copy bedrock elevations into a fillable working field. We'll
 	// raise pits in this copy without modifying bedrock — bedrock
 	// stays the source of truth for visualization and sea checks.
@@ -72,7 +78,59 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 
 	flowDir := computeFlowDirections(elev)
 	accum := computeAccumulation(elev, bedrock, flowDir)
-	return traceRivers(bedrock, flowDir, accum, threshold, maxLen)
+	rivers, riverCells := traceRivers(bedrock, flowDir, accum, threshold, maxLen)
+
+	// Lakes: cells where the *filled* flow direction routes to a
+	// neighbor that's higher in *bedrock* — that's the algorithmic
+	// signature of a real-world basin floor. Pit-fill papered over
+	// the depression so flow could keep moving; lakes restore the
+	// depression to its natural visual identity.
+	//
+	// Restricted to cradle/foothill (where rivers are too) and to
+	// cells with non-trivial accumulation, so we don't tag every
+	// random tiny depression as a lake.
+	lakeSet := make(map[[2]int]bool)
+	for y := 0; y < Height; y++ {
+		for x := 0; x < Width; x++ {
+			z := bedrock[y][x].Zone
+			if z != BZCradle && z != BZFoothill {
+				continue
+			}
+			if accum[y][x] < threshold/2 {
+				continue
+			}
+			d := flowDir[y][x]
+			if d.dx == 0 && d.dy == 0 {
+				continue
+			}
+			nx, ny := x+d.dx, y+d.dy
+			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+				continue
+			}
+			if bedrock[ny][nx].Elevation <= 0 {
+				continue
+			}
+			if bedrock[ny][nx].Elevation > bedrock[y][x].Elevation {
+				lakeSet[[2]int{x, y}] = true
+			}
+		}
+	}
+
+	// Filter river cells: a cell that's a lake shouldn't *also* be
+	// painted as a river. The river visually merges into the lake.
+	var lakes []LakeCell
+	filtered := riverCells[:0]
+	for _, rc := range riverCells {
+		key := [2]int{int(rc.X), int(rc.Y)}
+		if lakeSet[key] {
+			continue
+		}
+		filtered = append(filtered, rc)
+	}
+	for cell := range lakeSet {
+		lakes = append(lakes, LakeCell{X: int64(cell[0]), Y: int64(cell[1])})
+	}
+	return rivers, filtered, lakes
 }
 
 // fillPits raises depressions in the heightmap so every land cell has

@@ -21,6 +21,7 @@ const (
 	RegionGlacier        int64 = 11
 	RegionAgraria        int64 = 12
 	RegionAgrariaUpland  int64 = 13
+	RegionLake           int64 = 14
 )
 
 type RegionCell struct {

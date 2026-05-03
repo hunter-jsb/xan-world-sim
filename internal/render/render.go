@@ -20,6 +20,7 @@ var glyphForKind = map[string]rune{
 	"glacier":        '*',
 	"agraria":        ';',
 	"agraria_upland": '\'',
+	"lake":           'o',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -60,6 +61,9 @@ var shadingByKind = map[string]kindShading{
 	"agraria": {base: -80, amp: 15, colors: [5]string{"137", "143", "144", "179", "180"}},
 	// brighter tan — Agraria upland (higher)
 	"agraria_upland": {base: -40, amp: 15, colors: [5]string{"143", "179", "180", "215", "222"}},
+	// lake — pale blue, distinct from rivers (bright bold cyan) so
+	// you can see lakes adjacent to rivers
+	"lake": {base: 100, amp: 50, colors: [5]string{"31", "38", "45", "81", "117"}, bold: true},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -185,6 +189,7 @@ func Legend() string {
 		item("glacier", "glacier"),
 		item("agraria", "agraria coast"),
 		item("agraria_upland", "agraria upland"),
+		item("lake", "lake"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3
 }
