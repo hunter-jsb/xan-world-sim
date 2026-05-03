@@ -117,39 +117,58 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 			}
 		}
 	}
+	// Connected-component filter: walk candidates with BFS to find
+	// each connected cluster, keep only clusters of meaningful size.
+	// Real lakes span multiple cells; isolated 1-2 cell candidates
+	// are noise at our grid resolution. The threshold of 3 is the
+	// smallest cluster size that represents a real geographic feature
+	// (~150km² at our cell size — comparable to real-world named
+	// lakes), and is grounded in the resolution of the grid, not a
+	// tunable knob.
+	const minLakeClusterCells = 3
 	lakeSet := make(map[[2]int]bool)
+	visited := make(map[[2]int]bool)
 	for c := range candidates {
-		for dy := -1; dy <= 1; dy++ {
-			for dx := -1; dx <= 1; dx++ {
-				if dx == 0 && dy == 0 {
-					continue
-				}
-				if candidates[[2]int{c[0] + dx, c[1] + dy}] {
-					lakeSet[c] = true
-					break
+		if visited[c] {
+			continue
+		}
+		var component [][2]int
+		queue := [][2]int{c}
+		visited[c] = true
+		for len(queue) > 0 {
+			head := queue[0]
+			queue = queue[1:]
+			component = append(component, head)
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					n := [2]int{head[0] + dx, head[1] + dy}
+					if !candidates[n] || visited[n] {
+						continue
+					}
+					visited[n] = true
+					queue = append(queue, n)
 				}
 			}
-			if lakeSet[c] {
-				break
+		}
+		if len(component) >= minLakeClusterCells {
+			for _, cell := range component {
+				lakeSet[cell] = true
 			}
 		}
 	}
 
-	// Filter river cells: a cell that's a lake shouldn't *also* be
-	// painted as a river. The river visually merges into the lake.
+	// Don't filter river cells just because they're also lake cells.
+	// In real hydrology a river flows *through* a lake; we render the
+	// river layer over the region layer, so a cell that's both will
+	// show as a river — which is geologically correct.
 	var lakes []LakeCell
-	filtered := riverCells[:0]
-	for _, rc := range riverCells {
-		key := [2]int{int(rc.X), int(rc.Y)}
-		if lakeSet[key] {
-			continue
-		}
-		filtered = append(filtered, rc)
-	}
 	for cell := range lakeSet {
 		lakes = append(lakes, LakeCell{X: int64(cell[0]), Y: int64(cell[1])})
 	}
-	return rivers, filtered, lakes
+	return rivers, riverCells, lakes
 }
 
 // fillPits raises depressions in the heightmap so every land cell has
