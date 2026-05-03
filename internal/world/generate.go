@@ -126,6 +126,48 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Marsh: vegetated lowland directly adjacent to a water body, where
+	// temperature is above freezing. The "adjacency to water" criterion
+	// is the wet-biome definition; the temperature gate is the same
+	// freezing-point used for lakes — frozen wetlands aren't marshes.
+	waterSet := make(map[[2]int]bool, len(w.Regions)+len(w.Rivers))
+	for _, rc := range w.Regions {
+		switch rc.RegionID {
+		case RegionLake, RegionBrine, RegionEastSea:
+			waterSet[[2]int{int(rc.X), int(rc.Y)}] = true
+		}
+	}
+	for _, r := range w.Rivers {
+		waterSet[[2]int{int(r.X), int(r.Y)}] = true
+	}
+	for i := range w.Regions {
+		rc := &w.Regions[i]
+		switch rc.RegionID {
+		case RegionCradle, RegionForest, RegionTundra:
+		default:
+			continue
+		}
+		// Check 8-neighbors for water adjacency.
+		adjacent := false
+		for dy := -1; dy <= 1 && !adjacent; dy++ {
+			for dx := -1; dx <= 1 && !adjacent; dx++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				if waterSet[[2]int{int(rc.X) + dx, int(rc.Y) + dy}] {
+					adjacent = true
+				}
+			}
+		}
+		if !adjacent {
+			continue
+		}
+		lat := Latitude(int(rc.Y), w.LatTop, w.LatBottom)
+		if Temperature(lat, rc.Elevation, climate) > freezePoint {
+			rc.RegionID = RegionMarsh
+		}
+	}
+
 	return w
 }
 

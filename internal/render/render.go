@@ -23,6 +23,7 @@ var glyphForKind = map[string]rune{
 	"lake":           'o',
 	"forest":         'T',
 	"tundra":         '`',
+	"marsh":          '=',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -71,6 +72,9 @@ var shadingByKind = map[string]kindShading{
 	"forest": {base: 100, amp: 50, colors: [5]string{"22", "28", "29", "65", "71"}},
 	// tundra — pale gray-green; cold and sparse
 	"tundra": {base: 100, amp: 50, colors: [5]string{"101", "108", "144", "145", "151"}},
+	// marsh — muddy yellow-green, water-reflecting; sits between
+	// forest and the water it borders
+	"marsh": {base: 100, amp: 50, colors: [5]string{"58", "100", "107", "143", "108"}},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -201,6 +205,7 @@ func Legend() string {
 	row4 := strings.Join([]string{
 		item("forest", "forest"),
 		item("tundra", "tundra"),
+		item("marsh", "marsh"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4
 }
