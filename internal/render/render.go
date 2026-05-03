@@ -50,6 +50,7 @@ var glyphForKind = map[string]rune{
 	"forest":         'T',
 	"tundra":         '`',
 	"marsh":          '=',
+	"seat":           'H',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -101,6 +102,8 @@ var shadingByKind = map[string]kindShading{
 	// marsh — muddy yellow-green, water-reflecting; sits between
 	// forest and the water it borders
 	"marsh": {base: 100, amp: 50, colors: [5]string{"58", "100", "107", "143", "108"}},
+	// seat — bold gold, civilization marker on a river chain
+	"seat": {base: 100, amp: 50, colors: [5]string{"178", "214", "220", "226", "227"}, bold: true},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -259,6 +262,7 @@ func Legend() string {
 		item("forest", "forest"),
 		item("tundra", "tundra"),
 		item("marsh", "marsh"),
+		item("seat", "seat"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4
 }

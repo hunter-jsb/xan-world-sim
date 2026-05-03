@@ -1,6 +1,9 @@
 package world
 
-import "math/rand"
+import (
+	"math/rand"
+	"sort"
+)
 
 // Generate produces a deterministic world from the given seed and a
 // moment in geological time (kya = kiloyears before present).
@@ -123,6 +126,52 @@ func Generate(seed int64, kya int) World {
 			rc.RegionID = RegionTundra
 		case t < warmCradleStart:
 			rc.RegionID = RegionForest
+		}
+	}
+
+	// Salmon lord seats — major rivers get a settlement at their
+	// midpoint. We use the *same* river network the player sees, so
+	// seats follow the actual hydrology. Threshold of "river length
+	// at least 5 cells" is grounded in scale: a river that short is
+	// barely a stream at our cell size and wouldn't sustain a lord's
+	// hall. Climate-gated through the rivers themselves — if the
+	// river doesn't exist (e.g. glacial peak), no seat. The seat is
+	// flipped onto the river cell directly; render layer paints
+	// seats *over* the river glyph so the river chain has a
+	// settlement at the bend, geographically correct (a lord's seat
+	// sits on the river bank, with the river still flowing past).
+	if len(w.Rivers) > 0 {
+		groups := make(map[int64][]RiverCell)
+		for _, r := range w.Rivers {
+			groups[r.RiverID] = append(groups[r.RiverID], r)
+		}
+		seatSet := make(map[[2]int64]bool)
+		for _, group := range groups {
+			if len(group) < 5 {
+				continue
+			}
+			sort.Slice(group, func(i, j int) bool { return group[i].Ord < group[j].Ord })
+			mid := group[len(group)/2]
+			seatSet[[2]int64{mid.X, mid.Y}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if seatSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionSeat
+			}
+		}
+		// Filter seat cells out of the rivers list so the directional
+		// river glyph doesn't paint over the seat. The river is
+		// implicitly there — the seat sits on it.
+		if len(seatSet) > 0 {
+			filtered := w.Rivers[:0]
+			for _, r := range w.Rivers {
+				if seatSet[[2]int64{r.X, r.Y}] {
+					continue
+				}
+				filtered = append(filtered, r)
+			}
+			w.Rivers = filtered
 		}
 	}
 
