@@ -18,28 +18,31 @@ type River struct {
 // which cells participate when a river is fully developed. What
 // changes with climate is how far each river extends downstream from
 // its headwater (riverMaxLenFor below).
-const riverThreshold = 25
+//
+// Tuning: higher value = fewer minor drainages, less scatter, more
+// visible "main rivers." Lower = denser network, more contiguous
+// chains but more minor stubs.
+const riverThreshold = 35
 
 // riverMaxLenFor controls how many cells each river extends downstream
-// from its headwater, as a function of glacial index.
+// from its headwater, as a function of glacial index. Rivers always
+// start at headwaters; as the world warms, each river extends further
+// downstream — head-to-mouth growth, matching deglaciation reality.
 //
-// This is the core fix for "rivers seem to appear in the south first
-// as you warm the world." Real rivers form at the ice edge — water
-// emerges from melting ice and flows downstream as more is released.
-// So as a glacial cycle warms, rivers should grow head-to-mouth, not
-// mouth-to-source. Capping each river's length and growing the cap
-// with warming climate produces that head-to-mouth growth.
+// Linear with no cap — gI=1.0 gives 0 (locked in ice), gI=0 gives
+// max length. Smooth all the way through the cycle so panning kya
+// shows steady extension instead of a jump-in at some threshold.
 //
 // Numbers:
-//   gI ≥ 0.9 → 0  (no rivers; locked in ice)
-//   gI = 0.5 → ~33 cells (mid-Melt — rivers visible at headwaters,
-//                          extending part-way through the cradle)
-//   gI = 0.0 → ~80 cells (full extent; major drainages reach the sea)
+//   gI = 1.00 → 0
+//   gI = 0.85 → ~12  (rivers as small upstream segments)
+//   gI = 0.50 → 40   (mid-Melt — reaching well into the cradle)
+//   gI = 0.00 → 80   (full extent; major drainages reach the sea)
 func riverMaxLenFor(gI float64) int {
-	if gI >= 0.9 {
+	if gI >= 1.0 {
 		return 0
 	}
-	return int(80.0 * (0.9 - gI) / 0.9)
+	return int(80.0 * (1.0 - gI))
 }
 
 // flowRivers runs a D8 flow-direction + flow-accumulation pass on the
@@ -239,28 +242,15 @@ func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, th
 			if !isRiverZone(bedrock[y][x].Zone) {
 				continue
 			}
-			// Pit-fill raises basin cells in the working elevation
-			// field, so the D8 flow direction it produces can route
-			// water to a neighbor that's *higher* in actual bedrock —
-			// looks like a river flowing uphill. Drop those cells; in
-			// real terrain this would be a lake floor (water sits
-			// here, doesn't visibly flow). Sinks and off-map flows
-			// are kept (they're real outlets).
-			d := flowDir[y][x]
-			if d.dx == 0 && d.dy == 0 {
-				isRiver[[2]int{x, y}] = true
-				continue
-			}
-			nx, ny := x+d.dx, y+d.dy
-			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
-				isRiver[[2]int{x, y}] = true
-				continue
-			}
-			if bedrock[ny][nx].Elevation <= bedrock[y][x].Elevation {
-				isRiver[[2]int{x, y}] = true
-			}
+			isRiver[[2]int{x, y}] = true
 		}
 	}
+	// (Previously we filtered out cells whose flow went uphill in
+	// bedrock — pit-fill artifacts. That broke chains visibly:
+	// head→A→B→C with B uphill became "head→A" + "C", a gap at B.
+	// Better contiguity to keep B in the chain and accept the rare
+	// briefly-uphill segment; in real terrain those are small lakes
+	// the river flows through.)
 
 	// Headwaters: river cells with no upstream river cell flowing into them.
 	incoming := make(map[[2]int]int)
