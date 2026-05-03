@@ -1,12 +1,38 @@
 package render
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hunterjsb/xan-world-sim/internal/db"
 )
+
+// directionalRiverGlyph picks a glyph that visually traces flow.
+// Cardinal east/west/south get arrow chars; diagonals get `/` or `\`
+// which line up across rows; northward flow is rare and renders as
+// the default `,` to avoid colliding with the plateau `^` glyph.
+func directionalRiverGlyph(dx, dy int) rune {
+	switch {
+	case dx > 0 && dy == 0:
+		return '>'
+	case dx < 0 && dy == 0:
+		return '<'
+	case dx == 0 && dy > 0:
+		return 'v'
+	case dx > 0 && dy > 0:
+		return '\\'
+	case dx < 0 && dy > 0:
+		return '/'
+	case dx > 0 && dy < 0:
+		return '/'
+	case dx < 0 && dy < 0:
+		return '\\'
+	default:
+		return ','
+	}
+}
 
 var glyphForKind = map[string]rune{
 	"plateau":        '^',
@@ -151,12 +177,39 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 		}
 		grid[gy][gx] = styleFor(c.Kind, c.Elevation).Render(string(g))
 	}
+	// Group river cells by river_id and sort by ord so we can derive
+	// the flow direction at each cell from its successor in the chain.
+	// That lets us render diagonal rivers as `\` `/` instead of `,`,
+	// which makes the chains visually contiguous instead of looking
+	// like scattered dots on a coarse grid.
+	riverGlyphAt := make(map[[2]int64]rune, len(rivers))
+	groups := make(map[int64][]db.GetRiverCellsInBoundsRow)
+	for _, r := range rivers {
+		groups[r.RiverID] = append(groups[r.RiverID], r)
+	}
+	for id := range groups {
+		sort.Slice(groups[id], func(i, j int) bool { return groups[id][i].Ord < groups[id][j].Ord })
+		group := groups[id]
+		for i := range group {
+			c := group[i]
+			g := riverGlyph
+			if i+1 < len(group) {
+				next := group[i+1]
+				g = directionalRiverGlyph(int(next.X-c.X), int(next.Y-c.Y))
+			}
+			riverGlyphAt[[2]int64{c.X, c.Y}] = g
+		}
+	}
 	for _, r := range rivers {
 		gy, gx := int(r.Y-minY), int(r.X-minX)
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
 			continue
 		}
-		grid[gy][gx] = riverStyle.Render(string(riverGlyph))
+		g := riverGlyphAt[[2]int64{r.X, r.Y}]
+		if g == 0 {
+			g = riverGlyph
+		}
+		grid[gy][gx] = riverStyle.Render(string(g))
 	}
 
 	var b strings.Builder

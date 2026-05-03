@@ -10,7 +10,7 @@ import (
 )
 
 const getRiverCellsInBounds = `-- name: GetRiverCellsInBounds :many
-SELECT rc.x, rc.y, r.name AS river_name
+SELECT rc.river_id, rc.x, rc.y, rc.ord, r.name AS river_name
 FROM river_cells rc
 JOIN rivers r ON r.id = rc.river_id
 WHERE rc.x >= ? AND rc.x <= ? AND rc.y >= ? AND rc.y <= ?
@@ -25,8 +25,10 @@ type GetRiverCellsInBoundsParams struct {
 }
 
 type GetRiverCellsInBoundsRow struct {
+	RiverID   int64  `json:"river_id"`
 	X         int64  `json:"x"`
 	Y         int64  `json:"y"`
+	Ord       int64  `json:"ord"`
 	RiverName string `json:"river_name"`
 }
 
@@ -44,7 +46,13 @@ func (q *Queries) GetRiverCellsInBounds(ctx context.Context, arg GetRiverCellsIn
 	items := []GetRiverCellsInBoundsRow{}
 	for rows.Next() {
 		var i GetRiverCellsInBoundsRow
-		if err := rows.Scan(&i.X, &i.Y, &i.RiverName); err != nil {
+		if err := rows.Scan(
+			&i.RiverID,
+			&i.X,
+			&i.Y,
+			&i.Ord,
+			&i.RiverName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
