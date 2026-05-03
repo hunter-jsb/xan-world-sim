@@ -13,31 +13,33 @@ type River struct {
 	Name string
 }
 
-// riverBaseThreshold is the flow accumulation a cell needs to be
-// marked as a river *at full warm climate* (glacial index = 0). Tuned
-// for our ~60x22 grid — high enough that only major drainages show.
-// At higher glacial indices, the effective threshold rises sharply
-// (riverThresholdFor below) so rivers fade out as ice accumulates.
-//
-// Note: cells where pit-fill creates fake-uphill flow are filtered
-// out post-accumulation, so the effective river-cell count is lower
-// than raw accumulation suggests. Threshold tuned with that in mind.
-const riverBaseThreshold = 30
+// riverThreshold is the flow accumulation a cell needs to be in the
+// river network *at all*. Uniform across climate — it just identifies
+// which cells participate when a river is fully developed. What
+// changes with climate is how far each river extends downstream from
+// its headwater (riverMaxLenFor below).
+const riverThreshold = 25
 
-// riverThresholdFor scales the river-accumulation threshold by the
-// current glacial state. The shape: very low when gI is near 0
-// (interglacial — full rivers), rising past hand-laid base values as
-// the Melt rolls back, effectively infinite at gI=1 (full glacial —
-// no rivers, water locked in ice).
+// riverMaxLenFor controls how many cells each river extends downstream
+// from its headwater, as a function of glacial index.
 //
-// Concretely: cells emerge as rivers in the late stages of the Melt
-// (kya ~15–25) rather than at an arbitrary half-cycle gate.
-func riverThresholdFor(gI float64) int {
-	if gI >= 0.85 {
-		return 1 << 20 // sentinel: nothing qualifies as a river
+// This is the core fix for "rivers seem to appear in the south first
+// as you warm the world." Real rivers form at the ice edge — water
+// emerges from melting ice and flows downstream as more is released.
+// So as a glacial cycle warms, rivers should grow head-to-mouth, not
+// mouth-to-source. Capping each river's length and growing the cap
+// with warming climate produces that head-to-mouth growth.
+//
+// Numbers:
+//   gI ≥ 0.9 → 0  (no rivers; locked in ice)
+//   gI = 0.5 → ~33 cells (mid-Melt — rivers visible at headwaters,
+//                          extending part-way through the cradle)
+//   gI = 0.0 → ~80 cells (full extent; major drainages reach the sea)
+func riverMaxLenFor(gI float64) int {
+	if gI >= 0.9 {
+		return 0
 	}
-	scale := 1 + 30*gI*gI // ramps fast as gI grows
-	return int(float64(riverBaseThreshold) * scale)
+	return int(80.0 * (0.9 - gI) / 0.9)
 }
 
 // flowRivers runs a D8 flow-direction + flow-accumulation pass on the
@@ -52,7 +54,7 @@ func riverThresholdFor(gI float64) int {
 // Step 3: trace — cells with accumulation >= threshold are river cells;
 // each headwater becomes its own river_id, terminating where it
 // reaches a previously-traced cell or leaves land.
-func flowRivers(bedrock [][]BedrockCell, threshold int) ([]River, []RiverCell) {
+func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell) {
 	// Copy bedrock elevations into a fillable working field. We'll
 	// raise pits in this copy without modifying bedrock — bedrock
 	// stays the source of truth for visualization and sea checks.
@@ -67,7 +69,7 @@ func flowRivers(bedrock [][]BedrockCell, threshold int) ([]River, []RiverCell) {
 
 	flowDir := computeFlowDirections(elev)
 	accum := computeAccumulation(elev, bedrock, flowDir)
-	return traceRivers(bedrock, flowDir, accum, threshold)
+	return traceRivers(bedrock, flowDir, accum, threshold, maxLen)
 }
 
 // fillPits raises depressions in the heightmap so every land cell has
@@ -216,7 +218,7 @@ func computeAccumulation(elev [][]float64, bedrock [][]BedrockCell, flowDir [][]
 	return accum
 }
 
-func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, threshold int) ([]River, []RiverCell) {
+func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, threshold int, maxLen int) ([]River, []RiverCell) {
 	// Only paint cells as rivers in zones where rivers visually
 	// belong — cradle, foothill. Plateau and mountain accumulate
 	// flow too, but their drainage in our 2D model often runs off the
@@ -298,6 +300,9 @@ func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, th
 		var ord int64 = 1
 		startedThisRiver := false
 		for {
+			if int(ord) > maxLen {
+				break // climate-controlled river length cap
+			}
 			cell := [2]int{x, y}
 			if visited[cell] {
 				break // merged with another river

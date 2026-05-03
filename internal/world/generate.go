@@ -49,14 +49,16 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
-	// River accumulation threshold scales with climate state. At the
-	// glacial peak, threshold is effectively infinite (no rivers
-	// anywhere — water locked in ice). As ice retreats, threshold
-	// drops and rivers grow visible. So rivers fade in/out smoothly
-	// across the cycle instead of switching on at an arbitrary kya
-	// gate; their actual onset lands during the late Melt, matching
-	// the lore.
-	w.RiverInfo, w.Rivers = flowRivers(bedrock, riverThresholdFor(climate.GlacialIndex))
+	// Rivers grow head-to-mouth as climate warms. Threshold is uniform
+	// (it just identifies the river network topology); the maximum
+	// length each river extends from its headwater scales with
+	// glacial index. At the glacial peak, length=0 (no rivers — water
+	// locked in ice). As warming progresses, headwaters appear first,
+	// then rivers extend downstream. By the time the cycle is fully
+	// warm, rivers reach all the way from headwater to sea.
+	w.RiverInfo, w.Rivers = flowRivers(bedrock,
+		riverThreshold,
+		riverMaxLenFor(climate.GlacialIndex))
 	return w
 }
 
