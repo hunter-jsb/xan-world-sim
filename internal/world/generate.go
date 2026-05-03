@@ -72,6 +72,27 @@ func Generate(seed int64, kya int) World {
 		riverThreshold,
 		riverMaxLenFor(climate.GlacialIndex))
 
+	// Replace placeholder "River N" labels with seeded phoneme names.
+	// Naming is anchored to each river's headwater coords + world seed,
+	// not to its ID — so the same river retains its name across kya
+	// even though its length scales with climate.
+	if len(w.RiverInfo) > 0 {
+		headOf := make(map[int64]RiverCell, len(w.RiverInfo))
+		for _, rc := range w.Rivers {
+			if rc.Ord == 1 {
+				headOf[rc.RiverID] = rc
+			}
+		}
+		for i := range w.RiverInfo {
+			head, ok := headOf[w.RiverInfo[i].ID]
+			if !ok {
+				continue
+			}
+			w.RiverInfo[i].Name = generateName(
+				nameSeedForCell(seed, head.X, head.Y))
+		}
+	}
+
 	if len(lakes) > 0 {
 		lakeSet := make(map[[2]int]bool, len(lakes))
 		for _, l := range lakes {
