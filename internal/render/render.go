@@ -53,6 +53,7 @@ var glyphForKind = map[string]rune{
 	"seat":           'H',
 	"march":          'M',
 	"headwater":      'Y',
+	"outhold":        'x',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -112,6 +113,9 @@ var shadingByKind = map[string]kindShading{
 	// headwater — pale silver-cyan, sacred ice-melt source; brighter
 	// at high elevation since the headwaters of major rivers sit high
 	"headwater":      {base: 800, amp: 300, colors: [5]string{"81", "117", "153", "159", "195"}, bold: true},
+	// outhold — muted ochre, the off-grid catch-all; less imposing than
+	// the other seat tiers, suited to ranchers/prospectors/fugitives
+	"outhold":        {base: 200, amp: 200, colors: [5]string{"94", "130", "137", "172", "179"}},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -275,6 +279,7 @@ func Legend() string {
 	row5 := strings.Join([]string{
 		item("march", "march"),
 		item("headwater", "headwater"),
+		item("outhold", "outhold"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5
 }

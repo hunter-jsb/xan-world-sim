@@ -28,6 +28,7 @@ const (
 	RegionSeat           int64 = 18
 	RegionMarch          int64 = 19
 	RegionHeadwater      int64 = 20
+	RegionOuthold        int64 = 21
 )
 
 type RegionCell struct {

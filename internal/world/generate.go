@@ -359,6 +359,134 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Outhold — the catch-all seat tier from the lore. "Off-river,
+	// off-grid, no formal frontier role." Detected as the strict
+	// local maxima of distance from any civilization (rivers + named
+	// seats). This is the geographic signature of remoteness, scale-
+	// grounded by the BFS over the grid: a cell is an Outhold candidate
+	// only if it's *farther from civ than every neighbor*, so they
+	// emerge naturally spaced apart, never clumped.
+	//
+	// Minimum distance of 3 cells = ~150km buffer at our cell size, the
+	// scale at which a "remote holding" is meaningfully separated from
+	// the nearest road / river / hall. Smaller wouldn't be remote;
+	// larger wouldn't fit our grid.
+	{
+		const minOutholdDist = 3
+		const inf = 1 << 30
+		dist := make([][]int, Height)
+		for y := range dist {
+			dist[y] = make([]int, Width)
+			for x := range dist[y] {
+				dist[y][x] = inf
+			}
+		}
+		type qPt struct{ x, y, d int }
+		var bfs []qPt
+		mark := func(x, y int) {
+			if x < 0 || x >= Width || y < 0 || y >= Height {
+				return
+			}
+			if dist[y][x] != 0 {
+				dist[y][x] = 0
+				bfs = append(bfs, qPt{x, y, 0})
+			}
+		}
+		for _, r := range w.Rivers {
+			mark(int(r.X), int(r.Y))
+		}
+		for _, s := range w.Seats {
+			mark(int(s.X), int(s.Y))
+		}
+		for i := 0; i < len(bfs); i++ {
+			c := bfs[i]
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					nx, ny := c.x+dx, c.y+dy
+					if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+						continue
+					}
+					nd := c.d + 1
+					if nd < dist[ny][nx] {
+						dist[ny][nx] = nd
+						bfs = append(bfs, qPt{nx, ny, nd})
+					}
+				}
+			}
+		}
+		// Find strict local maxima among livable cells.
+		type outhold struct{ x, y int }
+		var picks []outhold
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			switch rc.RegionID {
+			case RegionCradle, RegionForest, RegionTundra:
+			default:
+				continue
+			}
+			d := dist[int(rc.Y)][int(rc.X)]
+			if d == inf || d < minOutholdDist {
+				continue
+			}
+			// Local-max with E/S tiebreaker: a cell wins a tie against
+			// its eastern and southern neighbors, but loses ties to
+			// north/west. This selects exactly one cell per connected
+			// plateau of equal-distance, no clustering.
+			isMax := true
+			for dy := -1; dy <= 1 && isMax; dy++ {
+				for dx := -1; dx <= 1 && isMax; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					nx, ny := int(rc.X)+dx, int(rc.Y)+dy
+					if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+						continue
+					}
+					nd := dist[ny][nx]
+					if nd > d {
+						isMax = false
+					} else if nd == d {
+						// tie: lose only to N/W neighbors
+						if dy < 0 || (dy == 0 && dx < 0) {
+							isMax = false
+						}
+					}
+				}
+			}
+			if isMax {
+				picks = append(picks, outhold{int(rc.X), int(rc.Y)})
+			}
+		}
+		// Apply: flip cells, append to Seats. Sort for stable hash order.
+		sort.Slice(picks, func(i, j int) bool {
+			if picks[i].y != picks[j].y {
+				return picks[i].y < picks[j].y
+			}
+			return picks[i].x < picks[j].x
+		})
+		outholdSet := make(map[[2]int64]bool, len(picks))
+		for _, p := range picks {
+			outholdSet[[2]int64{int64(p.x), int64(p.y)}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if outholdSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionOuthold
+			}
+		}
+		for _, p := range picks {
+			w.Seats = append(w.Seats, NamedSeat{
+				X:    int64(p.x),
+				Y:    int64(p.y),
+				Tier: RegionOuthold,
+				Name: generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
+			})
+		}
+	}
+
 	// Marsh: vegetated lowland directly adjacent to a water body, where
 	// temperature is above freezing. The "adjacency to water" criterion
 	// is the wet-biome definition; the temperature gate is the same
