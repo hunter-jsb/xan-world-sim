@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "5e51ee827a4fad3c1119500eb9a9e6725536b44176758e12b96286069c046ccb"},
-		{KyaNow, 42, "bb157ad5d4f14069e6ba8e75d112dbde4404d4249a32d22c808d18325b0c9818"},
+		{KyaNow, 0, "c77ea6f4e017d06703b1ed621bbbbd1e1204776dfe7c5118670096f87b601b92"},
+		{KyaNow, 42, "a79df4e4f1fa98e60fe7b5894a444eec6cd98a82e496dd6f3f4207e54b807229"},
 		{KyaOldWorld, 0, "9012e732bee5f7f022be24434dff37bfb6b0644cd74a43880a81cda78ae9b6b0"},
 		{KyaOldWorld, 42, "f8fba88398f512463ee935e56e1cb69ea05ee83afea7e1ee657c82c8a234ca3f"},
-		{100, 42, "5cb967cf69890b88209bd6ce9b77e9014908bcc6603df95ebbf8b277e877ba04"}, // mid-cycle
+		{100, 42, "54bd47437c71c53f85aa429f9e6332edffe86f56e1cd90389a8bf1ecaeb8fc13"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -115,7 +115,7 @@ func hashWorld(w World) string {
 		return seats[i].X < seats[j].X
 	})
 	for _, s := range seats {
-		fmt.Fprintf(&b, "S(%d,%d,%d,%s)|", s.X, s.Y, s.Tier, s.Name)
+		fmt.Fprintf(&b, "S(%d,%d,%d,%s,%.1f)|", s.X, s.Y, s.Tier, s.Name, s.Pressure)
 	}
 
 	lakes := make([]LakeInfo, len(w.Lakes))

@@ -84,13 +84,13 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	seatStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO seats (x, y, tier_id, name) VALUES (?, ?, ?, ?)")
+		"INSERT INTO seats (x, y, tier_id, name, pressure) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare seat: %w", err)
 	}
 	defer seatStmt.Close()
 	for _, s := range w.Seats {
-		if _, err := seatStmt.ExecContext(ctx, s.X, s.Y, s.Tier, s.Name); err != nil {
+		if _, err := seatStmt.ExecContext(ctx, s.X, s.Y, s.Tier, s.Name, s.Pressure); err != nil {
 			return fmt.Errorf("insert seat: %w", err)
 		}
 	}

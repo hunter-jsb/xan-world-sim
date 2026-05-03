@@ -827,6 +827,41 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Dragon pressure — per-seat exposure to dragon raids. Lore:
+	// "Northern kingdoms — those nestled up against the Mountain
+	// Barrier — live under constant dragon pressure... Risk falls off
+	// with distance from the mountains." Computed as
+	//   pressure = max(0, raidRadius - chebyshev_distance_to_nearest_den)
+	// at our cell size, raidRadius=12 cells ≈ 600km — the scale at
+	// which a dragon's territory tapers off into safe heartland.
+	if len(w.Dens) > 0 && len(w.Seats) > 0 {
+		const raidRadius = 12
+		for i := range w.Seats {
+			s := &w.Seats[i]
+			minD := raidRadius
+			for _, d := range w.Dens {
+				dx := int(s.X - d.X)
+				if dx < 0 {
+					dx = -dx
+				}
+				dy := int(s.Y - d.Y)
+				if dy < 0 {
+					dy = -dy
+				}
+				cheb := dx
+				if dy > cheb {
+					cheb = dy
+				}
+				if cheb < minD {
+					minD = cheb
+				}
+			}
+			if p := raidRadius - minD; p > 0 {
+				s.Pressure = float64(p)
+			}
+		}
+	}
+
 	// Mountain passes — saddles in the ridge that bridge the cradle
 	// to the plateau. From the lore: "pre-Melt these were passable;
 	// the Melt made them spectacular and brutal." Detection signals:

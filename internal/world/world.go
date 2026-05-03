@@ -50,10 +50,16 @@ type RiverCell struct {
 // March, and Headwater hold gets one. The Tier carries which kind of
 // seat it is (RegionSeat / RegionMarch / RegionHeadwater) so render
 // and persistence layers can distinguish them.
+//
+// Pressure is the seat's exposure to dragon raids — falls off with
+// Chebyshev distance to the nearest dragon den, capped at 12 cells
+// (~600km, the implied raid radius from lore). 0 = safe heartland;
+// >8 = "constant dragon pressure" northern frontier.
 type NamedSeat struct {
-	X, Y int64
-	Tier int64
-	Name string
+	X, Y     int64
+	Tier     int64
+	Name     string
+	Pressure float64
 }
 
 // LakeInfo names a lake — one entry per connected cluster of RegionLake
