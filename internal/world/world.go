@@ -31,6 +31,7 @@ const (
 	RegionOuthold        int64 = 21
 	RegionReach          int64 = 22
 	RegionPass           int64 = 23
+	RegionDragonDen      int64 = 24
 )
 
 type RegionCell struct {
@@ -71,6 +72,17 @@ type PassInfo struct {
 	ID   int64
 	Name string
 	X, Y int64
+}
+
+// DenInfo names a dragon den — a mountain cell at strict local
+// elevation max. Lore: dragons den in mountain caves, "high,
+// defensible, hard to reach without flight." Each seed rolls a
+// sparse population of dens, spaced by territory.
+type DenInfo struct {
+	ID        int64
+	Name      string
+	X, Y      int64
+	Elevation float64
 }
 
 // Road is one trade route — from a non-Tributary seat to its nearest
@@ -116,4 +128,5 @@ type World struct {
 	Passes     []PassInfo  // mountain passes through the ridge
 	Roads      []Road      // trade routes from each non-Tributary seat
 	RoadCells  []RoadCell  // cells along each road
+	Dens       []DenInfo   // dragon dens at mountain peaks
 }

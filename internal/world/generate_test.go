@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "0d3170696db301eb4b68d3102691d74da7b31d770ca8681a381de83f88aa23d6"},
-		{KyaNow, 42, "778fdd7373dc51a27096a8dcaa5ef679f0feaa8af13b834b41e50fb44b5240b3"},
-		{KyaOldWorld, 0, "5184a0140afcaaae4e851b3db1efa44ee3a4e127c27ddabe4f0652e35dca324f"},
-		{KyaOldWorld, 42, "68513a2bec8cfd46d53e4050d57c6ba5ca3d5fbb178dd81a127b1900e08665d0"},
-		{100, 42, "9a5ab34c2c565fd8bbbc46c2ddebd006086f32ff98acc289ba71feb9b472b189"}, // mid-cycle
+		{KyaNow, 0, "5e51ee827a4fad3c1119500eb9a9e6725536b44176758e12b96286069c046ccb"},
+		{KyaNow, 42, "bb157ad5d4f14069e6ba8e75d112dbde4404d4249a32d22c808d18325b0c9818"},
+		{KyaOldWorld, 0, "9012e732bee5f7f022be24434dff37bfb6b0644cd74a43880a81cda78ae9b6b0"},
+		{KyaOldWorld, 42, "f8fba88398f512463ee935e56e1cb69ea05ee83afea7e1ee657c82c8a234ca3f"},
+		{100, 42, "5cb967cf69890b88209bd6ce9b77e9014908bcc6603df95ebbf8b277e877ba04"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -148,6 +148,13 @@ func hashWorld(w World) string {
 	})
 	for _, rc := range rcs {
 		fmt.Fprintf(&b, "RDC(%d,%d,%d,%d)|", rc.RoadID, rc.X, rc.Y, rc.Ord)
+	}
+
+	dens := make([]DenInfo, len(w.Dens))
+	copy(dens, w.Dens)
+	sort.Slice(dens, func(i, j int) bool { return dens[i].ID < dens[j].ID })
+	for _, d := range dens {
+		fmt.Fprintf(&b, "D(%d,%d,%d,%.1f,%s)|", d.ID, d.X, d.Y, d.Elevation, d.Name)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))

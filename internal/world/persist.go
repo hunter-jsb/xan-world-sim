@@ -43,6 +43,9 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM roads"); err != nil {
 		return fmt.Errorf("clear roads: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM dens"); err != nil {
+		return fmt.Errorf("clear dens: %w", err)
+	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
 		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
@@ -137,6 +140,18 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, rc := range w.RoadCells {
 		if _, err := rcStmt2.ExecContext(ctx, rc.RoadID, rc.X, rc.Y, rc.Ord); err != nil {
 			return fmt.Errorf("insert road_cell: %w", err)
+		}
+	}
+
+	denStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO dens (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare den: %w", err)
+	}
+	defer denStmt.Close()
+	for _, d := range w.Dens {
+		if _, err := denStmt.ExecContext(ctx, d.ID, d.Name, d.X, d.Y, d.Elevation); err != nil {
+			return fmt.Errorf("insert den: %w", err)
 		}
 	}
 

@@ -723,6 +723,110 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Dragon dens — explicit lore target: "the Mountain Barrier is
+	// dotted with dragon-dens of varying scale." Detected as mountain
+	// cells at strict local elevation max in a 5×5 window (the inverse
+	// of passes — passes are saddles, dens are peaks). Greedy spatial
+	// dedup at min-sep 6 cells (~300km, the scale of a dragon's
+	// territory). Runs before pass detection so dens take precedence
+	// on the rare cell that's both a peak AND a saddle (shouldn't
+	// happen geometrically but the guard is cheap).
+	{
+		const denWindow = 2
+		const denMinSepSq = 6 * 6
+		regionAt := make(map[[2]int]int64, len(w.Regions))
+		elevAt := make(map[[2]int]float64, len(w.Regions))
+		for _, rc := range w.Regions {
+			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+		}
+		type denCand struct {
+			x, y int
+			elev float64
+		}
+		var cands []denCand
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if rc.RegionID != RegionMountain {
+				continue
+			}
+			cx, cy := int(rc.X), int(rc.Y)
+			d := elevAt[[2]int{cx, cy}]
+			isMax := true
+			for dy := -denWindow; dy <= denWindow && isMax; dy++ {
+				for dx := -denWindow; dx <= denWindow && isMax; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					n := [2]int{cx + dx, cy + dy}
+					if regionAt[n] != RegionMountain {
+						continue
+					}
+					nd := elevAt[n]
+					if nd > d {
+						isMax = false
+					} else if nd == d {
+						// E/S tiebreaker: lose ties to N/W
+						if dy < 0 || (dy == 0 && dx < 0) {
+							isMax = false
+						}
+					}
+				}
+			}
+			if isMax {
+				cands = append(cands, denCand{cx, cy, d})
+			}
+		}
+		// Sort by elevation desc — keep the most "dragonish" peaks first.
+		// Tiebreaker (Y, X) for determinism.
+		sort.Slice(cands, func(i, j int) bool {
+			if cands[i].elev != cands[j].elev {
+				return cands[i].elev > cands[j].elev
+			}
+			if cands[i].y != cands[j].y {
+				return cands[i].y < cands[j].y
+			}
+			return cands[i].x < cands[j].x
+		})
+		var picks []denCand
+		for _, c := range cands {
+			tooClose := false
+			for _, p := range picks {
+				dx := c.x - p.x
+				dy := c.y - p.y
+				if dx*dx+dy*dy < denMinSepSq {
+					tooClose = true
+					break
+				}
+			}
+			if tooClose {
+				continue
+			}
+			picks = append(picks, c)
+		}
+		denSet := make(map[[2]int64]bool, len(picks))
+		for _, p := range picks {
+			denSet[[2]int64{int64(p.x), int64(p.y)}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if denSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionDragonDen
+			}
+		}
+		var nextID int64 = 1
+		for _, p := range picks {
+			w.Dens = append(w.Dens, DenInfo{
+				ID:        nextID,
+				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
+				X:         int64(p.x),
+				Y:         int64(p.y),
+				Elevation: p.elev,
+			})
+			nextID++
+		}
+	}
+
 	// Mountain passes — saddles in the ridge that bridge the cradle
 	// to the plateau. From the lore: "pre-Melt these were passable;
 	// the Melt made them spectacular and brutal." Detection signals:
