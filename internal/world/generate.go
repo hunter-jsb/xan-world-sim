@@ -53,7 +53,7 @@ func Generate(seed int64, kya int) World {
 	// before the drainage network exists. Threshold of 0.3 ~= the
 	// climate has retreated far enough from the glacial peak.
 	if climate.GlacialIndex < 0.3 {
-		w.Rivers = staticRivers()
+		w.RiverInfo, w.Rivers = flowRivers(bedrock)
 	}
 	return w
 }
@@ -191,33 +191,3 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// ----- rivers -----
-
-func staticRivers() []RiverCell {
-	type p struct{ x, y int }
-	type r struct {
-		id   int64
-		path []p
-	}
-	// All x coords shifted east by 4 from the original layout (land
-	// shifted to make room for visible Brine on the west).
-	rivers := []r{
-		{id: 1, path: []p{{21, 11}, {21, 12}, {21, 13}, {22, 14}, {23, 14}}},
-		{id: 2, path: []p{{26, 10}, {26, 11}, {26, 12}, {25, 13}, {24, 14}, {23, 14}}},
-		{id: 3, path: []p{{24, 15}, {25, 16}, {26, 17}, {27, 18}, {28, 18}}},
-		{id: 4, path: []p{{32, 21}, {31, 20}, {30, 19}, {29, 18}, {28, 18}}},
-		{id: 5, path: nil},
-	}
-	for x := 29; x <= 51; x++ {
-		rivers[4].path = append(rivers[4].path, p{x, 18})
-	}
-	out := []RiverCell{}
-	for _, riv := range rivers {
-		for i, pt := range riv.path {
-			out = append(out, RiverCell{
-				RiverID: riv.id, X: int64(pt.x), Y: int64(pt.y), Ord: int64(i + 1),
-			})
-		}
-	}
-	return out
-}

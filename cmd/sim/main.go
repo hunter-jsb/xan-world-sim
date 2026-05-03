@@ -202,16 +202,18 @@ func main() {
 	q := db.New(conn)
 	ctx := context.Background()
 
-	regions, err := q.ListRegions(ctx)
-	if err != nil {
-		log.Fatalf("list regions: %v", err)
-	}
-	if len(regions) == 0 {
-		fmt.Fprintln(os.Stderr, "no regions in db — did you run migrations? `goose -dir migrations sqlite3 world.db up`")
-		os.Exit(1)
-	}
-
 	const minX, minY, maxX, maxY = 0, 0, 59, 21
+
+	// Self-bootstrap: read seed+kya from world_meta (defaults to 0 if
+	// fresh after `goose up`), regenerate the world from current code,
+	// and write through to the DB. This means `goose up && go run
+	// ./cmd/sim` always shows what the current code produces, with no
+	// stale-DB problem and no required seedgen step.
+	seed := readMetaInt(ctx, conn, "seed")
+	kya := int(readMetaInt(ctx, conn, "kya"))
+	if err := world.Persist(ctx, conn, world.Generate(seed, kya)); err != nil {
+		log.Fatalf("bootstrap world: %v", err)
+	}
 
 	cells, err := q.GetCellsInBounds(ctx, db.GetCellsInBoundsParams{
 		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
@@ -228,12 +230,7 @@ func main() {
 
 	mapStr := render.Grid(cells, rivers, minX, minY, maxX, maxY)
 
-	seed := readMetaInt(ctx, conn, "seed")
-	kya := int(readMetaInt(ctx, conn, "kya"))
-	era := world.Era(readMetaString(ctx, conn, "era"))
-	if era == "" {
-		era = world.EraForKya(kya)
-	}
+	era := world.EraForKya(kya)
 
 	if *printOnce {
 		fmt.Println(render.Title("xan-world-sim — the cradle"))

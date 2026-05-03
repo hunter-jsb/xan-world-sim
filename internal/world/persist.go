@@ -17,7 +17,12 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 	defer tx.Rollback()
 
+	// SQLite FKs are off by default so "DELETE rivers cascades" can't
+	// be relied on. Be explicit: drain river_cells first, then rivers.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM river_cells"); err != nil {
+		return fmt.Errorf("clear river_cells: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM rivers"); err != nil {
 		return fmt.Errorf("clear rivers: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM region_cells"); err != nil {
@@ -33,6 +38,18 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, c := range w.Regions {
 		if _, err := rcStmt.ExecContext(ctx, c.RegionID, c.X, c.Y, c.Elevation); err != nil {
 			return fmt.Errorf("insert region cell: %w", err)
+		}
+	}
+
+	riverStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO rivers (id, name) VALUES (?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare river info: %w", err)
+	}
+	defer riverStmt.Close()
+	for _, r := range w.RiverInfo {
+		if _, err := riverStmt.ExecContext(ctx, r.ID, r.Name); err != nil {
+			return fmt.Errorf("insert river info: %w", err)
 		}
 	}
 

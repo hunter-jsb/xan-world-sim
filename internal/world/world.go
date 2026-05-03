@@ -52,6 +52,7 @@ type World struct {
 	Orbital OrbitalParams
 	Climate ClimateState
 
-	Regions []RegionCell
-	Rivers  []RiverCell
+	Regions    []RegionCell
+	RiverInfo  []River     // (id, name) — populated alongside Rivers
+	Rivers     []RiverCell // (river_id, x, y, ord)
 }
