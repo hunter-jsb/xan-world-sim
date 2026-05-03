@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "809e09f1dd7b96126ac0a48d4956fc81896f54d2a4e6fd2eb2e55a42046486d5"},
-		{KyaNow, 42, "db0bc09cdc2665444bc9745b6a813f61cc580ea77b0676f6274cf0b9179b8575"},
+		{KyaNow, 0, "0d3170696db301eb4b68d3102691d74da7b31d770ca8681a381de83f88aa23d6"},
+		{KyaNow, 42, "778fdd7373dc51a27096a8dcaa5ef679f0feaa8af13b834b41e50fb44b5240b3"},
 		{KyaOldWorld, 0, "5184a0140afcaaae4e851b3db1efa44ee3a4e127c27ddabe4f0652e35dca324f"},
 		{KyaOldWorld, 42, "68513a2bec8cfd46d53e4050d57c6ba5ca3d5fbb178dd81a127b1900e08665d0"},
-		{100, 42, "b093d6e140a973fe85c3ce702682a4c7e7fa33815150cf8af281c00841540c8e"}, // mid-cycle
+		{100, 42, "9a5ab34c2c565fd8bbbc46c2ddebd006086f32ff98acc289ba71feb9b472b189"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -130,6 +130,24 @@ func hashWorld(w World) string {
 	sort.Slice(passes, func(i, j int) bool { return passes[i].ID < passes[j].ID })
 	for _, p := range passes {
 		fmt.Fprintf(&b, "P(%d,%d,%d,%s)|", p.ID, p.X, p.Y, p.Name)
+	}
+
+	roads := make([]Road, len(w.Roads))
+	copy(roads, w.Roads)
+	sort.Slice(roads, func(i, j int) bool { return roads[i].ID < roads[j].ID })
+	for _, r := range roads {
+		fmt.Fprintf(&b, "RD(%d,%d,%d→%d,%d)|", r.ID, r.FromX, r.FromY, r.ToX, r.ToY)
+	}
+	rcs := make([]RoadCell, len(w.RoadCells))
+	copy(rcs, w.RoadCells)
+	sort.Slice(rcs, func(i, j int) bool {
+		if rcs[i].RoadID != rcs[j].RoadID {
+			return rcs[i].RoadID < rcs[j].RoadID
+		}
+		return rcs[i].Ord < rcs[j].Ord
+	})
+	for _, rc := range rcs {
+		fmt.Fprintf(&b, "RDC(%d,%d,%d,%d)|", rc.RoadID, rc.X, rc.Y, rc.Ord)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))

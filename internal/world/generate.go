@@ -1,9 +1,40 @@
 package world
 
 import (
+	"container/heap"
 	"math/rand"
 	"sort"
 )
+
+// roadItem is one frontier entry in the road-network Dijkstra. The
+// tiebreaker on equal distance is (Y, X) — gives the search a stable
+// expansion order so determinism is preserved across runs.
+type roadItem struct {
+	X, Y int
+	Dist int
+}
+
+type roadPQ []*roadItem
+
+func (h roadPQ) Len() int { return len(h) }
+func (h roadPQ) Less(i, j int) bool {
+	if h[i].Dist != h[j].Dist {
+		return h[i].Dist < h[j].Dist
+	}
+	if h[i].Y != h[j].Y {
+		return h[i].Y < h[j].Y
+	}
+	return h[i].X < h[j].X
+}
+func (h roadPQ) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *roadPQ) Push(x interface{}) { *h = append(*h, x.(*roadItem)) }
+func (h *roadPQ) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
 
 // Generate produces a deterministic world from the given seed and a
 // moment in geological time (kya = kiloyears before present).
@@ -792,6 +823,150 @@ func Generate(seed int64, kya int) World {
 				Y:    int64(p[1]),
 			})
 			nextID++
+		}
+	}
+
+	// Roads — overland trade routes from each non-Tributary seat back
+	// to its nearest Tributary. The lore grounds the inter-Tributary
+	// network in the rivers themselves ("the river physically connects
+	// them — and that bond is real"); these roads complement that with
+	// the overland paths March / Headwater / Reach / Outhold seats need
+	// to plug into the heartland.
+	//
+	// Multi-source Dijkstra: all Tributaries seed the search at dist 0,
+	// edges weighted by terrain (river=1 cheapest, settlements=2,
+	// open land=4, foothill/doab=6, marsh=8, mountain pass=4; mountains
+	// outside passes, sea, glacier, plateau are impassable).
+	if len(w.Seats) > 0 {
+		var tribCount int
+		for _, s := range w.Seats {
+			if s.Tier == RegionSeat {
+				tribCount++
+				break
+			}
+		}
+		if tribCount > 0 {
+			regionAt := make(map[[2]int]int64, len(w.Regions))
+			for _, rc := range w.Regions {
+				regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			}
+			riverAt := make(map[[2]int]bool, len(w.Rivers))
+			for _, r := range w.Rivers {
+				riverAt[[2]int{int(r.X), int(r.Y)}] = true
+			}
+			cost := func(x, y int) int {
+				if riverAt[[2]int{x, y}] {
+					return 1
+				}
+				switch regionAt[[2]int{x, y}] {
+				case RegionSeat, RegionMarch, RegionHeadwater,
+					RegionOuthold, RegionReach:
+					return 2
+				case RegionPass:
+					return 4
+				case RegionCradle, RegionForest, RegionTundra:
+					return 4
+				case RegionFoothill, RegionDoab:
+					return 6
+				case RegionMarsh:
+					return 8
+				}
+				return -1 // impassable
+			}
+
+			const inf = 1 << 30
+			dist := make([][]int, Height)
+			parent := make([][][2]int, Height)
+			for y := 0; y < Height; y++ {
+				dist[y] = make([]int, Width)
+				parent[y] = make([][2]int, Width)
+				for x := 0; x < Width; x++ {
+					dist[y][x] = inf
+					parent[y][x] = [2]int{-1, -1}
+				}
+			}
+			pq := &roadPQ{}
+			heap.Init(pq)
+			for _, s := range w.Seats {
+				if s.Tier != RegionSeat {
+					continue
+				}
+				dist[s.Y][s.X] = 0
+				heap.Push(pq, &roadItem{X: int(s.X), Y: int(s.Y), Dist: 0})
+			}
+			for pq.Len() > 0 {
+				cur := heap.Pop(pq).(*roadItem)
+				if cur.Dist > dist[cur.Y][cur.X] {
+					continue
+				}
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						nx, ny := cur.X+dx, cur.Y+dy
+						if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+							continue
+						}
+						c := cost(nx, ny)
+						if c < 0 {
+							continue
+						}
+						newDist := cur.Dist + c
+						if newDist < dist[ny][nx] {
+							dist[ny][nx] = newDist
+							parent[ny][nx] = [2]int{cur.X, cur.Y}
+							heap.Push(pq, &roadItem{X: nx, Y: ny, Dist: newDist})
+						}
+					}
+				}
+			}
+			// For each non-Tributary seat, walk parent[] back to source.
+			var nextRoadID int64 = 1
+			for _, s := range w.Seats {
+				if s.Tier == RegionSeat {
+					continue
+				}
+				sx, sy := int(s.X), int(s.Y)
+				if dist[sy][sx] == inf {
+					continue // unreachable
+				}
+				var path [][2]int
+				cx, cy := sx, sy
+				path = append(path, [2]int{cx, cy})
+				for {
+					if dist[cy][cx] == 0 {
+						break // reached a Tributary
+					}
+					p := parent[cy][cx]
+					if p[0] < 0 {
+						break
+					}
+					path = append(path, p)
+					cx, cy = p[0], p[1]
+					if len(path) > Width*Height {
+						break // safety
+					}
+				}
+				if len(path) < 2 {
+					continue
+				}
+				toX, toY := int64(path[len(path)-1][0]), int64(path[len(path)-1][1])
+				w.Roads = append(w.Roads, Road{
+					ID:    nextRoadID,
+					FromX: s.X, FromY: s.Y,
+					ToX: toX, ToY: toY,
+				})
+				for i, c := range path {
+					w.RoadCells = append(w.RoadCells, RoadCell{
+						RoadID: nextRoadID,
+						X:      int64(c[0]),
+						Y:      int64(c[1]),
+						Ord:    int64(i + 1),
+					})
+				}
+				nextRoadID++
+			}
 		}
 	}
 

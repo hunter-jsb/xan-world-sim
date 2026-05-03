@@ -73,6 +73,24 @@ type PassInfo struct {
 	X, Y int64
 }
 
+// Road is one trade route — from a non-Tributary seat to its nearest
+// Tributary, traced via Dijkstra over terrain. Rivers serve as the
+// inter-Tributary spine implicitly (the lore: "the river physically
+// connects them"); roads are the overland complement.
+type Road struct {
+	ID                 int64
+	FromX, FromY       int64
+	ToX, ToY           int64
+}
+
+// RoadCell is one cell along a Road. Ord increases from the source
+// seat (FromX/FromY) toward the Tributary endpoint.
+type RoadCell struct {
+	RoadID int64
+	X, Y   int64
+	Ord    int64
+}
+
 type World struct {
 	Seed int64
 
@@ -96,4 +114,6 @@ type World struct {
 	Seats      []NamedSeat // settlements (Tributary, March, Headwater, Reach, Outhold)
 	Lakes      []LakeInfo  // named lake clusters (one per connected component)
 	Passes     []PassInfo  // mountain passes through the ridge
+	Roads      []Road      // trade routes from each non-Tributary seat
+	RoadCells  []RoadCell  // cells along each road
 }

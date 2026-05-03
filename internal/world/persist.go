@@ -37,6 +37,12 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM passes"); err != nil {
 		return fmt.Errorf("clear passes: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM road_cells"); err != nil {
+		return fmt.Errorf("clear road_cells: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM roads"); err != nil {
+		return fmt.Errorf("clear roads: %w", err)
+	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
 		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
@@ -107,6 +113,30 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, p := range w.Passes {
 		if _, err := passStmt.ExecContext(ctx, p.ID, p.Name, p.X, p.Y); err != nil {
 			return fmt.Errorf("insert pass: %w", err)
+		}
+	}
+
+	roadStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO roads (id, from_x, from_y, to_x, to_y) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare road: %w", err)
+	}
+	defer roadStmt.Close()
+	for _, r := range w.Roads {
+		if _, err := roadStmt.ExecContext(ctx, r.ID, r.FromX, r.FromY, r.ToX, r.ToY); err != nil {
+			return fmt.Errorf("insert road: %w", err)
+		}
+	}
+
+	rcStmt2, err := tx.PrepareContext(ctx,
+		"INSERT INTO road_cells (road_id, x, y, ord) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare road_cell: %w", err)
+	}
+	defer rcStmt2.Close()
+	for _, rc := range w.RoadCells {
+		if _, err := rcStmt2.ExecContext(ctx, rc.RoadID, rc.X, rc.Y, rc.Ord); err != nil {
+			return fmt.Errorf("insert road_cell: %w", err)
 		}
 	}
 
