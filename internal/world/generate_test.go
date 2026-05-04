@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "cd1ae2231ef637023d23ee15f6c2bc36e75f136085d77912bade75d2089f78dd"},
-		{KyaNow, 42, "5f822bc585eb6f676734b954ad7882fafa096a7526e65a9445220c68a6de2d66"},
-		{KyaOldWorld, 0, "780e532e899fc527911aac68a10bed6270288e4b22369404153bc55f0e50e849"},
-		{KyaOldWorld, 42, "7a6d40954e16e21bc0fb99371c262fa5004934c41fcd5c25713da84149d27385"},
-		{100, 42, "634bc3efb07940f2e016e9d0c5a366cc2e55fabc33473faa76bbb46e9b51e645"}, // mid-cycle
+		{KyaNow, 0, "bbefda9dc6a0175adcd134f8fe8f18942c7e438ffa221bd5238c337a7b113beb"},
+		{KyaNow, 42, "1c5875b880a4c92bec743a0e88f0cfb074274b7d3e782ba052226e213a879c63"},
+		{KyaOldWorld, 0, "7e4489d628c526274e5359bcf43275b16f3fcc206b403bea84b7cf3f127f7d03"},
+		{KyaOldWorld, 42, "e4a16a229d977fc94d960fccfbe09d1b1fd9994ddeb51f0ad95ba0b2f9c62913"},
+		{100, 42, "8abef8c3b05311e37bf2bdcc5ec352767bebdf54ce79e43db29d30df824a1e79"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c

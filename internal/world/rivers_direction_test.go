@@ -26,7 +26,7 @@ func TestRiversFlowDownhill(t *testing.T) {
 		fillPits(elev, bedrock)
 		flowDir := computeFlowDirections(elev)
 		accum := computeAccumulation(elev, bedrock, flowDir)
-		_, cells := traceRivers(bedrock, flowDir, accum, riverThreshold, riverMaxLenFor(0.0))
+		_, cells := traceRivers(bedrock, flowDir, accum, riverThreshold(), riverMaxLenFor(0.0))
 
 		var ns int // segments with neg dy = north (toward y=0)
 		var ss int // segments with pos dy = south

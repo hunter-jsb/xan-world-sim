@@ -100,7 +100,7 @@ func Generate(seed int64, kya int) World {
 	// is geologically correct.
 	var lakes []LakeCell
 	w.RiverInfo, w.Rivers, lakes = flowRivers(bedrock,
-		riverThreshold,
+		riverThreshold(),
 		riverMaxLenFor(climate.GlacialIndex))
 
 	// Replace placeholder "River N" labels with seeded phoneme names.
@@ -1530,7 +1530,10 @@ func genCoastX(rng *rand.Rand) []int {
 	for y := 0; y < Height; y++ {
 		jitter += rng.Intn(3) - 1
 		jitter = clamp(jitter, -2, 2)
-		out[y] = clamp(70+jitter, 67, 75)
+		// Bounds (-3/+5 around center) are absolute cell counts, not
+		// proportional to Width — the per-row jitter only swings ±2,
+		// so a small fixed window is enough for any map size.
+		out[y] = clamp(coastCenterX+jitter, coastCenterX-3, coastCenterX+5)
 	}
 	return out
 }

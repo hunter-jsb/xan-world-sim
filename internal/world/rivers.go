@@ -26,11 +26,20 @@ type River struct {
 // its headwater (riverMaxLenFor below).
 //
 // Tuning: higher value = fewer minor drainages, less scatter, more
-// visible "main rivers." Lower = denser network, more contiguous
-// chains but more minor stubs. Scales with map area: at 80×30 the
-// land area is ~80% larger than the original 60×22 layout, so the
-// threshold scales up to keep the network density similar.
-const riverThreshold = 50
+// visible "main rivers." Lower = denser network. Scales with the
+// number of land cells — at the 80×30 reference layout this is 50;
+// for larger maps we want proportionally more accumulation upstream
+// before a stream qualifies as a river.
+const riverThresholdRef = 50
+const riverThresholdRefArea = 80 * 30
+
+func riverThreshold() int {
+	t := riverThresholdRef * Width * Height / riverThresholdRefArea
+	if t < 5 {
+		return 5
+	}
+	return t
+}
 
 // riverMaxLenFor controls how many cells each river extends downstream
 // from its headwater, as a function of glacial index. Rivers always
@@ -41,16 +50,15 @@ const riverThreshold = 50
 // max length. Smooth all the way through the cycle so panning kya
 // shows steady extension instead of a jump-in at some threshold.
 //
-// Numbers (scaled for 80×30 grid; the constant 110 ≈ map diagonal):
-//   gI = 1.00 → 0
-//   gI = 0.85 → ~16  (rivers as small upstream segments)
-//   gI = 0.50 → 55   (mid-Melt — reaching well into the cradle)
-//   gI = 0.00 → 110  (full extent; major drainages reach the sea)
+// Numbers scale to the map diagonal — at 80×30 that's ~85 cells, and
+// we want full-warm rivers to potentially reach across the whole
+// thing, so the cap is ≈ Width + Height (≈110 at 80×30).
 func riverMaxLenFor(gI float64) int {
 	if gI >= 1.0 {
 		return 0
 	}
-	return int(110.0 * (1.0 - gI))
+	maxLen := float64(Width + Height)
+	return int(maxLen * (1.0 - gI))
 }
 
 // flowRivers runs a D8 flow-direction + flow-accumulation pass on the

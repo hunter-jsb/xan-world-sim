@@ -26,17 +26,50 @@ const (
 	BZEastBasin     // basin east of the Rift — Eastern Sea now, ice sheet at glacial peak
 )
 
-// Map allocation along x (scaled for Width=80):
-//   x =  0..3  : Brine deep (always submerged — gives the shoreline real
-//                visible water to retreat from / advance into)
-//   x =  4     : Agraria coast (deeper shelf, exposes later)
-//   x =  5..6  : Agraria upland (higher shelf, exposes first, tapers
-//                in y to suggest a natural wedge against the plateau)
-//   x =  7..69 : Land (plateau / mountain / foothill / cradle / doab)
-//   x = 70..79 : Eastern Sea
+// Map allocation along x — all positions scale proportionally with
+// Width and Height. Anchors are the 80×30 reference layout (well-tuned
+// at that resolution); other sizes scale linearly. Widening the map
+// just bumps the constants in world.go and everything below follows.
+//
+//   [0, brineEndX)              : Brine deep — always-submerged west
+//   brineEndX                   : Agraria coast (deeper shelf)
+//   brineEndX + 1               : Agraria upland
+//   brineEndX + 2               : Agraria upland tapered
+//   [landStartX, mountainEndX)  : Mountain row land (plateau / mountain
+//                                 / foothill / cradle / doab)
+//   [mountainEndX, eastSeaStart): Cradle extending east
+//   [eastSeaStart, Width)       : Eastern Sea
 const (
-	landStartX    = 8
-	agrariaCoastX = 4
+	// brineEndX = first land-strip column (right after the 4-col
+	// brine band of the reference 80-wide layout). Scales as Width/20.
+	brineEndX     = Width * 4 / 80
+	agrariaCoastX = brineEndX
+	// 3 agraria-strip columns (coast + upland + tapered) sit between
+	// brine and land; landStartX is one past those.
+	landStartX = brineEndX + 3
+	// cliffEastX: at the SW end of the rift, the mountain row reads as
+	// cliffs rather than mountains. This is the cutoff. ~26% of Width.
+	cliffEastX = Width * 21 / 80
+	// mountainEndX: mountain row stops here, leaving cradle space
+	// between the eastern foothills and the Eastern Sea.
+	mountainEndX = Width * 69 / 80
+	// coastCenterX: Eastern Sea coastline jitter center.
+	coastCenterX = Width * 70 / 80
+
+	// Y-axis bounds for the Agraria strip cells (within the 80×30
+	// reference: shelf 2..26, upland 2..22, tapered 5..19).
+	shelfTopY      = Height * 2 / 30
+	shelfBottomY   = Height * 26 / 30
+	uplandTopY     = Height * 2 / 30
+	uplandBottomY  = Height * 22 / 30
+	taperedTopY    = Height * 5 / 30
+	taperedBottomY = Height * 19 / 30
+
+	// Mountain-row Y interpolation. The Rift slopes NE→SW: at the
+	// far east the mountain band sits high (low Y), at the far west
+	// it drops south to meet the Brine cliffs (high Y).
+	mountainSouthY = Height * 19 / 30 // y at x=landStartX
+	mountainNorthY = Height * 4 / 30  // y at x=mountainEndX-1
 )
 
 // BedrockCell is the era-independent geology at one (x,y) position.
@@ -187,29 +220,30 @@ func zoneAmplitude(z BedrockZone) float64 {
 }
 
 func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone {
-	// West water/shelf strip: 4 cols of pure Brine + 3 cols of shelf.
+	// West water/shelf strip: brine band + 3-col shelf.
 	// At kya=0 the shelf is submerged → entire strip reads as Brine;
 	// at glacial peak the shelf emerges and the strip is half water /
 	// half land. The shoreline literally lives on this strip.
-	if x <= 3 {
+	if x < brineEndX {
 		return BZBrineDeep
 	}
 	if x == agrariaCoastX {
-		if y >= 2 && y <= 26 {
+		if y >= shelfTopY && y <= shelfBottomY {
 			return BZAgrariaShelf
 		}
 		return BZBrineDeep
 	}
-	if x == 5 {
-		if y >= 2 && y <= 22 {
+	if x == brineEndX+1 {
+		if y >= uplandTopY && y <= uplandBottomY {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
 	}
-	if x == 6 {
-		// Tapered upland — narrower than x=5, suggests the shelf
-		// thinning out as it approaches the plateau cliff base.
-		if y >= 5 && y <= 19 {
+	if x == brineEndX+2 {
+		// Tapered upland — narrower in y than the upland col,
+		// suggests the shelf thinning out as it approaches the
+		// plateau cliff base.
+		if y >= taperedTopY && y <= taperedBottomY {
 			return BZAgrariaUpland
 		}
 		return BZBrineDeep
@@ -220,13 +254,13 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 		return BZEastBasin
 	}
 
-	// Inland (x=7..69)
+	// Inland strip
 	mr := mountainRow[x]
 	if mr >= 0 && y < mr {
 		return BZPlateau
 	}
 	if mr >= 0 && y == mr {
-		if x <= 20 {
+		if x <= cliffEastX {
 			return BZCliff
 		}
 		return BZMountain
@@ -239,50 +273,45 @@ func bedrockZone(x, y int, mountainRow, foothillThick, coastX []int) BedrockZone
 
 // baseMountainRow returns the y-row of the mountain band at column x
 // (or -1 if there is no mountain at this column). The Rift slopes
-// NE→SW: at the eastern end the mountains sit higher (lower Y), at
-// the western SW end they drop to a lower row, encoding the cliff →
-// barrier → foothill blend from the lore. Scaled for 80×30.
+// NE→SW: at the eastern end the mountains sit high (low Y), at the
+// far west they drop south (high Y) to meet the cliff coast.
+//
+// Computed as a linear interpolation between mountainSouthY (at
+// x=landStartX) and mountainNorthY (at x=mountainEndX-1), so the
+// band scales smoothly with Width and Height.
 func baseMountainRow(x int) int {
-	switch {
-	case x >= 64 && x <= 68:
-		return 4
-	case x >= 59 && x <= 63:
-		return 5
-	case x >= 53 && x <= 58:
-		return 7
-	case x >= 48 && x <= 52:
-		return 8
-	case x >= 43 && x <= 47:
-		return 10
-	case x >= 37 && x <= 42:
-		return 11
-	case x >= 32 && x <= 36:
-		return 12
-	case x >= 27 && x <= 31:
-		return 14
-	case x >= 21 && x <= 26:
-		return 15
-	case x >= 16 && x <= 20:
-		return 16
-	case x >= 11 && x <= 15:
-		return 18
-	case x >= 8 && x <= 10:
-		return 19
+	if x < landStartX || x >= mountainEndX {
+		return -1
 	}
-	return -1
+	span := mountainEndX - 1 - landStartX
+	if span <= 0 {
+		return mountainSouthY
+	}
+	// pct: 0 at far west (south), 1 at far east (north)
+	num := (x - landStartX) * (mountainSouthY - mountainNorthY)
+	// Round-half-up to keep adjacent x in step.
+	return mountainSouthY - (num+span/2)/span
 }
 
+// baseFoothillThickness returns the foothill band width at column x.
+// Foothills broaden NE → SW... wait, opposite: they broaden NE (per
+// lore: "NE end — asymptotic foothill blend... wide belt of rolling
+// foothills"). The SW cliff section has 0 thickness. The east end has
+// the maximum (3). Linearly interpolated across [cliffEastX, mountainEndX).
 func baseFoothillThickness(x int) int {
-	switch {
-	case x >= 8 && x <= 20:
+	if x < cliffEastX || x >= mountainEndX {
+		// SW cliffs and beyond-east cells: no foothill band here.
 		return 0
-	case x >= 21 && x <= 36:
-		return 1
-	case x >= 37 && x <= 52:
-		return 2
-	case x >= 53 && x <= 68:
-		return 3
 	}
-	return 0
+	span := mountainEndX - cliffEastX
+	if span <= 0 {
+		return 0
+	}
+	// 4 bands across the span (thickness 0,1,2,3).
+	b := (x - cliffEastX) * 4 / span
+	if b > 3 {
+		b = 3
+	}
+	return b
 }
 
