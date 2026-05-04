@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -85,32 +86,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = fmt.Sprintf("jumping to %dkya...", next)
 			return m, m.regen(m.seed, next)
+		// Time-scrubbing convention: kya = kiloyears *before* present.
+		// "Right" / `]` = step forward through geological history =
+		// further back into the past (kya increases). "Left" / `[` =
+		// rewind toward the present (kya decreases). Both ends of the
+		// scrub bar surface a status so dead-end key presses aren't
+		// silent.
 		case "]", "right":
-			next := clampKya(m.kya - stepSmall)
-			if next == m.kya {
-				return m, nil
-			}
-			m.status = fmt.Sprintf("→ %dkya", next)
-			return m, m.regen(m.seed, next)
-		case "[", "left":
 			next := clampKya(m.kya + stepSmall)
 			if next == m.kya {
 				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
 				return m, nil
 			}
+			m.status = fmt.Sprintf("→ %dkya", next)
+			return m, m.regen(m.seed, next)
+		case "[", "left":
+			next := clampKya(m.kya - stepSmall)
+			if next == m.kya {
+				m.status = "at 0kya (present)"
+				return m, nil
+			}
 			m.status = fmt.Sprintf("← %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
-			next := clampKya(m.kya - stepBig)
+			next := clampKya(m.kya + stepBig)
 			if next == m.kya {
+				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
 				return m, nil
 			}
 			m.status = fmt.Sprintf("→→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
-			next := clampKya(m.kya + stepBig)
+			next := clampKya(m.kya - stepBig)
 			if next == m.kya {
-				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
+				m.status = "at 0kya (present)"
 				return m, nil
 			}
 			m.status = fmt.Sprintf("←← %dkya", next)
@@ -132,29 +141,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) regen(seed int64, kya int) tea.Cmd {
-	return func() tea.Msg {
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				simLog("panic seed=%d kya=%d: %v\n%s", seed, kya, r, debug.Stack())
+				msg = regenMsg{err: fmt.Errorf("panic at kya=%d: %v", kya, r)}
+			}
+		}()
 		m.regenMu.Lock()
 		defer m.regenMu.Unlock()
+		simLog("regen seed=%d kya=%d", seed, kya)
 		w := world.Generate(seed, kya)
 		if err := world.Persist(m.ctx, m.conn, w); err != nil {
-			return regenMsg{err: err}
+			simLog("persist failed seed=%d kya=%d: %v", seed, kya, err)
+			return regenMsg{err: fmt.Errorf("persist: %w", err)}
 		}
 		cells, err := m.q.GetCellsInBounds(m.ctx, db.GetCellsInBoundsParams{
 			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
 		})
 		if err != nil {
-			return regenMsg{err: err}
+			simLog("cells failed seed=%d kya=%d: %v", seed, kya, err)
+			return regenMsg{err: fmt.Errorf("cells: %w", err)}
 		}
 		rivers, err := m.q.GetRiverCellsInBounds(m.ctx, db.GetRiverCellsInBoundsParams{
 			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
 		})
 		if err != nil {
-			return regenMsg{err: err}
+			simLog("rivers failed seed=%d kya=%d: %v", seed, kya, err)
+			return regenMsg{err: fmt.Errorf("rivers: %w", err)}
 		}
 		roads, err := m.q.GetRoadCellsInBounds(m.ctx, m.minX, m.maxX, m.minY, m.maxY)
 		if err != nil {
-			return regenMsg{err: err}
+			simLog("roads failed seed=%d kya=%d: %v", seed, kya, err)
+			return regenMsg{err: fmt.Errorf("roads: %w", err)}
 		}
+		simLog("ok seed=%d kya=%d cells=%d rivers=%d roads=%d", seed, kya, len(cells), len(rivers), len(roads))
 		return regenMsg{
 			mapStr: render.Grid(cells, rivers, roads, m.minX, m.minY, m.maxX, m.maxY),
 			seed:   seed,
@@ -162,6 +183,18 @@ func (m model) regen(seed int64, kya int) tea.Cmd {
 			era:    w.Era,
 		}
 	}
+}
+
+// simLog appends a timestamped line to /tmp/xan-sim.log. Useful for
+// capturing TUI errors that flicker through too fast to read on
+// screen, or panics that kill the Bubble Tea program.
+func simLog(format string, args ...interface{}) {
+	f, err := os.OpenFile("/tmp/xan-sim.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s "+format+"\n", append([]interface{}{time.Now().Format("15:04:05.000")}, args...)...)
 }
 
 var (
