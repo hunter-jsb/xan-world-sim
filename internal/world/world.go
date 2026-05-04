@@ -33,6 +33,7 @@ const (
 	RegionPass           int64 = 23
 	RegionDragonDen      int64 = 24
 	RegionDrakeNest      int64 = 25
+	RegionWyvernRookery  int64 = 26
 )
 
 type RegionCell struct {
@@ -104,6 +105,18 @@ type NestInfo struct {
 	Elevation float64
 }
 
+// RookeryInfo names a wyvern rookery — a cliff cell at strict local
+// elevation max. Lore: wyverns "nest like raptors — cliffs,
+// rookeries, mountain spires. Often colonial." Min-sep is small
+// (3 cells / ~150km) because wyverns are the densest of the
+// dragon family — skirmisher-flavored, numerous.
+type RookeryInfo struct {
+	ID        int64
+	Name      string
+	X, Y      int64
+	Elevation float64
+}
+
 // Road is one trade route — from a non-Tributary seat to its nearest
 // Tributary, traced via Dijkstra over terrain. Rivers serve as the
 // inter-Tributary spine implicitly (the lore: "the river physically
@@ -149,4 +162,5 @@ type World struct {
 	RoadCells  []RoadCell  // cells along each road
 	Dens       []DenInfo   // dragon dens at mountain peaks
 	Nests      []NestInfo  // drake nests at foothill peaks
+	Rookeries  []RookeryInfo // wyvern rookeries on cliffs
 }

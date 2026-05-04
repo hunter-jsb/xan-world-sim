@@ -925,6 +925,105 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
+	// Wyvern rookeries — the densest of the dragon-family trio. Lore:
+	// "wyverns nest like raptors — cliffs, rookeries, mountain spires.
+	// Often colonial." Detection on RegionCliff cells using a tight
+	// 3x3 local-max window and min-sep 3 — wyverns crowd more than
+	// drakes or dragons. The cliff band naturally curves through the
+	// SW Rift, so rookeries land along that line.
+	{
+		const rookWindow = 1
+		const rookMinSepSq = 3 * 3
+		regionAt := make(map[[2]int]int64, len(w.Regions))
+		elevAt := make(map[[2]int]float64, len(w.Regions))
+		for _, rc := range w.Regions {
+			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+		}
+		type rookCand struct {
+			x, y int
+			elev float64
+		}
+		var cands []rookCand
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if rc.RegionID != RegionCliff {
+				continue
+			}
+			cx, cy := int(rc.X), int(rc.Y)
+			d := elevAt[[2]int{cx, cy}]
+			isMax := true
+			for dy := -rookWindow; dy <= rookWindow && isMax; dy++ {
+				for dx := -rookWindow; dx <= rookWindow && isMax; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					n := [2]int{cx + dx, cy + dy}
+					if regionAt[n] != RegionCliff {
+						continue
+					}
+					nd := elevAt[n]
+					if nd > d {
+						isMax = false
+					} else if nd == d {
+						if dy < 0 || (dy == 0 && dx < 0) {
+							isMax = false
+						}
+					}
+				}
+			}
+			if isMax {
+				cands = append(cands, rookCand{cx, cy, d})
+			}
+		}
+		sort.Slice(cands, func(i, j int) bool {
+			if cands[i].elev != cands[j].elev {
+				return cands[i].elev > cands[j].elev
+			}
+			if cands[i].y != cands[j].y {
+				return cands[i].y < cands[j].y
+			}
+			return cands[i].x < cands[j].x
+		})
+		var picks []rookCand
+		for _, c := range cands {
+			tooClose := false
+			for _, p := range picks {
+				dx := c.x - p.x
+				dy := c.y - p.y
+				if dx*dx+dy*dy < rookMinSepSq {
+					tooClose = true
+					break
+				}
+			}
+			if tooClose {
+				continue
+			}
+			picks = append(picks, c)
+		}
+		rookSet := make(map[[2]int64]bool, len(picks))
+		for _, p := range picks {
+			rookSet[[2]int64{int64(p.x), int64(p.y)}] = true
+		}
+		for i := range w.Regions {
+			rc := &w.Regions[i]
+			if rookSet[[2]int64{rc.X, rc.Y}] {
+				rc.RegionID = RegionWyvernRookery
+			}
+		}
+		var nextID int64 = 1
+		for _, p := range picks {
+			w.Rookeries = append(w.Rookeries, RookeryInfo{
+				ID:        nextID,
+				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
+				X:         int64(p.x),
+				Y:         int64(p.y),
+				Elevation: p.elev,
+			})
+			nextID++
+		}
+	}
+
 	// Dragon pressure — per-seat exposure to dragon raids. Lore:
 	// "Northern kingdoms — those nestled up against the Mountain
 	// Barrier — live under constant dragon pressure... Risk falls off

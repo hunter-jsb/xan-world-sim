@@ -49,6 +49,9 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM drake_nests"); err != nil {
 		return fmt.Errorf("clear drake_nests: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM wyvern_rookeries"); err != nil {
+		return fmt.Errorf("clear wyvern_rookeries: %w", err)
+	}
 
 	rcStmt, err := tx.PrepareContext(ctx,
 		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
@@ -167,6 +170,18 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, n := range w.Nests {
 		if _, err := nestStmt.ExecContext(ctx, n.ID, n.Name, n.X, n.Y, n.Elevation); err != nil {
 			return fmt.Errorf("insert nest: %w", err)
+		}
+	}
+
+	rookStmt, err := tx.PrepareContext(ctx,
+		"INSERT INTO wyvern_rookeries (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare rookery: %w", err)
+	}
+	defer rookStmt.Close()
+	for _, r := range w.Rookeries {
+		if _, err := rookStmt.ExecContext(ctx, r.ID, r.Name, r.X, r.Y, r.Elevation); err != nil {
+			return fmt.Errorf("insert rookery: %w", err)
 		}
 	}
 

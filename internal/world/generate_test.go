@@ -49,11 +49,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "99bf720cc9b74c1f336111febefec5a842155088d7229327f432a6956dcd9781"},
-		{KyaNow, 42, "2ea6b21a5beb5761b37ec175c8fd52b623766978384f0b64795442501ac54ef6"},
-		{KyaOldWorld, 0, "9012e732bee5f7f022be24434dff37bfb6b0644cd74a43880a81cda78ae9b6b0"},
-		{KyaOldWorld, 42, "f8fba88398f512463ee935e56e1cb69ea05ee83afea7e1ee657c82c8a234ca3f"},
-		{100, 42, "0a879d2b44757a9816c8c87db71afc5a5636de997986bb5fd0c8220967b18df3"}, // mid-cycle
+		{KyaNow, 0, "cd1ae2231ef637023d23ee15f6c2bc36e75f136085d77912bade75d2089f78dd"},
+		{KyaNow, 42, "5f822bc585eb6f676734b954ad7882fafa096a7526e65a9445220c68a6de2d66"},
+		{KyaOldWorld, 0, "780e532e899fc527911aac68a10bed6270288e4b22369404153bc55f0e50e849"},
+		{KyaOldWorld, 42, "7a6d40954e16e21bc0fb99371c262fa5004934c41fcd5c25713da84149d27385"},
+		{100, 42, "634bc3efb07940f2e016e9d0c5a366cc2e55fabc33473faa76bbb46e9b51e645"}, // mid-cycle
 	}
 	for _, c := range cases {
 		c := c
@@ -162,6 +162,13 @@ func hashWorld(w World) string {
 	sort.Slice(nests, func(i, j int) bool { return nests[i].ID < nests[j].ID })
 	for _, n := range nests {
 		fmt.Fprintf(&b, "N(%d,%d,%d,%.1f,%s)|", n.ID, n.X, n.Y, n.Elevation, n.Name)
+	}
+
+	rooks := make([]RookeryInfo, len(w.Rookeries))
+	copy(rooks, w.Rookeries)
+	sort.Slice(rooks, func(i, j int) bool { return rooks[i].ID < rooks[j].ID })
+	for _, r := range rooks {
+		fmt.Fprintf(&b, "W(%d,%d,%d,%.1f,%s)|", r.ID, r.X, r.Y, r.Elevation, r.Name)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))

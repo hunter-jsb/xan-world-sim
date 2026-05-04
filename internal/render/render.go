@@ -58,6 +58,7 @@ var glyphForKind = map[string]rune{
 	"pass":           'V',
 	"den":            'D',
 	"nest":           'd',
+	"rookery":        'w',
 	"unknown":        '?',
 	"drowned":        '_',
 }
@@ -132,6 +133,10 @@ var shadingByKind = map[string]kindShading{
 	// nest — orange-rust, drake's lair; less imposing than the
 	// dragon's blood-red but in the same warning-color family
 	"nest":           {base: 500, amp: 200, colors: [5]string{"94", "130", "166", "172", "208"}},
+	// rookery — sandy/dun, wyvern colonies on cliffs; muted earth
+	// tones since wyverns are "the lesser raider" — common, less
+	// fearsome than drakes or dragons
+	"rookery":        {base: 2500, amp: 200, colors: [5]string{"94", "137", "143", "180", "187"}},
 	"unknown":        {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
 	"drowned":        {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
 }
@@ -326,6 +331,7 @@ func Legend() string {
 		item("pass", "pass"),
 		item("den", "dragon den"),
 		item("nest", "drake nest"),
+		item("rookery", "wyvern rookery"),
 		roadStyle.Render(string(roadGlyph)) + dimStyle.Render(" road"),
 	}, "   ")
 	return row1 + "\n" + row2 + "\n" + row3 + "\n" + row4 + "\n" + row5 + "\n" + row6
