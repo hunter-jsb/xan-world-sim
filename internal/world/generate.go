@@ -432,51 +432,6 @@ func Generate(seed int64, kya int) World {
 		w.Rivers = filtered
 	}
 
-	// Doab: the wedge of land between two converging rivers (real
-	// geographic term — Mesopotamia is the classic example; lore calls
-	// our specific one "the jewel of the north"). Detection is purely
-	// systemic — a cell qualifies if multiple distinct river IDs sit
-	// within its local neighborhood, which geometrically picks out the
-	// interior of the V/Y formed by converging chains.
-	//
-	// Radius is grid-justified: at our cell size (~50km), neighborhood
-	// radius 2 = ~100km, which is the natural scale of "wedge between
-	// two rivers" before they're far enough apart to belong to
-	// independent drainages. Smaller would miss legitimate wedges;
-	// larger would smear unrelated rivers together.
-	//
-	// Restricted to foothill/cradle land — sea, lakes, mountains,
-	// glaciers, agraria etc. don't read as doab. Skip cells that are
-	// already seats (the lore's "lord who controls the choke" sits
-	// *in* the doab; the seat keeps its identity, not the doab tag).
-	{
-		const doabRadius = 2
-		riverIDsAt := make(map[[2]int]int64, len(w.Rivers))
-		for _, r := range w.Rivers {
-			riverIDsAt[[2]int{int(r.X), int(r.Y)}] = r.RiverID
-		}
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			switch rc.RegionID {
-			case RegionCradle, RegionFoothill, RegionForest, RegionTundra:
-			default:
-				continue
-			}
-			seen := make(map[int64]bool)
-			for dy := -doabRadius; dy <= doabRadius; dy++ {
-				for dx := -doabRadius; dx <= doabRadius; dx++ {
-					n := [2]int{int(rc.X) + dx, int(rc.Y) + dy}
-					if rid, ok := riverIDsAt[n]; ok {
-						seen[rid] = true
-					}
-				}
-			}
-			if len(seen) >= 2 {
-				rc.RegionID = RegionDoab
-			}
-		}
-	}
-
 	// Reach — the frontier-explorer seat tier. "A seat at the far edge
 	// of crown reach... so remote it is essentially autonomous in
 	// practice. Crown couriers arrive late or never."
