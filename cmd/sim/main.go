@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,13 @@ type model struct {
 	ctx  context.Context
 	conn *sql.DB
 	q    *db.Queries
+
+	// regenMu serializes regen Cmds. Bubble Tea fires Cmds in
+	// goroutines, so spamming the kya keys can launch multiple
+	// concurrent Generate→Persist→Query pipelines that race on
+	// SQLite (which only allows one writer at a time and surfaces
+	// the contention as "database is locked").
+	regenMu *sync.Mutex
 
 	mapStr string
 	legend string
@@ -125,6 +133,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) regen(seed int64, kya int) tea.Cmd {
 	return func() tea.Msg {
+		m.regenMu.Lock()
+		defer m.regenMu.Unlock()
 		w := world.Generate(seed, kya)
 		if err := world.Persist(m.ctx, m.conn, w); err != nil {
 			return regenMsg{err: err}
@@ -268,7 +278,8 @@ func main() {
 
 	m := model{
 		ctx: ctx, conn: conn, q: q,
-		mapStr: mapStr, legend: render.Legend(),
+		regenMu: &sync.Mutex{},
+		mapStr:  mapStr, legend: render.Legend(),
 		seed: seed, kya: kya, era: era,
 		minX: minX, minY: minY, maxX: maxX, maxY: maxY,
 	}
