@@ -77,27 +77,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "r":
+			newSeed := time.Now().UnixNano()
+			m.seed = newSeed
 			m.status = "rerolling..."
-			return m, m.regen(time.Now().UnixNano(), m.kya)
+			return m, m.regen(newSeed, m.kya)
 		case "e":
 			next := world.KyaNow
 			if m.kya == world.KyaNow {
 				next = world.KyaOldWorld
 			}
+			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("jumping to %dkya...", next)
 			return m, m.regen(m.seed, next)
 		// Time-scrubbing convention: kya = kiloyears *before* present.
 		// "Right" / `]` = step forward through geological history =
 		// further back into the past (kya increases). "Left" / `[` =
-		// rewind toward the present (kya decreases). Both ends of the
-		// scrub bar surface a status so dead-end key presses aren't
-		// silent.
+		// rewind toward the present (kya decreases).
+		//
+		// We update m.kya in Update (not just on regenMsg arrival) so
+		// rapid keypresses each advance from the latest intent rather
+		// than re-reading the still-rendered old value. regenMsg
+		// later filters out stale renders (see regenMsg case).
 		case "]", "right":
 			next := clampKya(m.kya + stepSmall)
 			if next == m.kya {
 				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
 				return m, nil
 			}
+			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "[", "left":
@@ -106,6 +113,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "at 0kya (present)"
 				return m, nil
 			}
+			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("← %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
@@ -114,6 +122,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = fmt.Sprintf("at %dkya (deep-time cap)", world.KyaMax)
 				return m, nil
 			}
+			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("→→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
@@ -122,19 +131,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "at 0kya (present)"
 				return m, nil
 			}
+			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 		}
 	case regenMsg:
 		if msg.err != nil {
 			m.status = "regen error: " + msg.err.Error()
-		} else {
-			m.mapStr = msg.mapStr
-			m.seed = msg.seed
-			m.kya = msg.kya
-			m.era = msg.era
-			m.status = ""
+			return m, nil
 		}
+		// Discard stale renders: while a regen Cmd was running the
+		// user may have pressed more keys, advancing m.kya/m.seed
+		// past this Cmd's target. The next/last regen Cmd in the
+		// serialized chain will render the final state.
+		if msg.kya != m.kya || msg.seed != m.seed {
+			return m, nil
+		}
+		m.mapStr = msg.mapStr
+		m.status = ""
 		return m, nil
 	}
 	return m, nil
