@@ -220,7 +220,8 @@ func main() {
 	q := db.New(conn)
 	ctx := context.Background()
 
-	const minX, minY, maxX, maxY = 0, 0, 59, 21
+	const minX, minY = 0, 0
+	maxX, maxY := int64(world.Width-1), int64(world.Height-1)
 
 	// Self-bootstrap: read seed+kya from world_meta (defaults to 0 if
 	// fresh after `goose up`), regenerate the world from current code,
