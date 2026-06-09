@@ -3,6 +3,7 @@ package world
 import (
 	"math"
 	"math/rand"
+	"sort"
 )
 
 // BedrockZone identifies the geological structure a cell belongs to.
@@ -78,7 +79,10 @@ type BedrockCell struct {
 	Elevation float64 // meters relative to present-day sea level (0)
 }
 
-func elevationForZone(z BedrockZone) float64 {
+// roughElevationForZone is the initial height for erosion initialization.
+// Erosion modifies these into physically-grounded terrain; this is a
+// starting point, not the final value.
+func roughElevationForZone(z BedrockZone) float64 {
 	switch z {
 	case BZPlateau:
 		return 1500
@@ -91,26 +95,156 @@ func elevationForZone(z BedrockZone) float64 {
 	case BZDoab:
 		return 2000
 	case BZCradle:
-		return 100
+		return 150
 	case BZBrineDeep:
 		return -800
 	case BZAgrariaShelf:
-		return -80 // coast: lower shelf, exposed when ΔSL < ~-80
+		return -80
 	case BZAgrariaUpland:
-		return -40 // upland: higher shelf, exposes first as sea drops
+		return -40
 	case BZEastBasin:
-		return -150 // shallower basin — Eastern Sea floor
+		return -150
 	}
 	return 0
 }
 
-// Heightmap generation parameters. Tuned to give every land zone real
-// internal variation (so rivers will have downhill gradients to follow
-// in v2), while preserving the big drops at cliff/coastline boundaries.
+// isLandZone returns true for zones above sea level that participate in erosion.
+// Sea/shelf/basin zones are held fixed as boundary conditions.
+func isLandZone(z BedrockZone) bool {
+	switch z {
+	case BZBrineDeep, BZAgrariaShelf, BZAgrariaUpland, BZEastBasin:
+		return false
+	}
+	return true
+}
+
+// flowAccumulationFromElev counts upstream land cells for each cell.
+// Mirrors computeAccumulation in rivers.go but uses elevation directly
+// (before BedrockCells are finalized) to identify land cells.
+func flowAccumulationFromElev(elev [][]float64, flowDir [][]flowVec) [][]int {
+	accum := make([][]int, Height)
+	type lc struct {
+		x, y int
+		e    float64
+	}
+	var cells []lc
+	for y := 0; y < Height; y++ {
+		accum[y] = make([]int, Width)
+		for x := 0; x < Width; x++ {
+			if elev[y][x] > 0 {
+				accum[y][x] = 1
+				cells = append(cells, lc{x, y, elev[y][x]})
+			}
+		}
+	}
+	sort.Slice(cells, func(i, j int) bool { return cells[i].e > cells[j].e })
+	for _, c := range cells {
+		d := flowDir[c.y][c.x]
+		if d.dx == 0 && d.dy == 0 {
+			continue
+		}
+		nx, ny := c.x+d.dx, c.y+d.dy
+		if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+			continue
+		}
+		accum[ny][nx] += accum[c.y][c.x]
+	}
+	return accum
+}
+
+// erodeStreamPower applies one explicit step of stream-power incision:
+//
+//	Δz = -K × A^m × S
+//
+// where A = upstream cell count, S = elevation drop to downhill neighbor.
+// Sea cells act as 0m base level so rivers grade to sea level, not seafloor.
+func erodeStreamPower(elev [][]float64, zones [][]BedrockZone, flowDir [][]flowVec, accum [][]int) {
+	next := make([][]float64, Height)
+	for y := range elev {
+		next[y] = make([]float64, Width)
+		copy(next[y], elev[y])
+	}
+	for y := 0; y < Height; y++ {
+		for x := 0; x < Width; x++ {
+			if !isLandZone(zones[y][x]) {
+				continue
+			}
+			d := flowDir[y][x]
+			if d.dx == 0 && d.dy == 0 {
+				continue
+			}
+			nx, ny := x+d.dx, y+d.dy
+			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+				continue
+			}
+			var downhill float64
+			if isLandZone(zones[ny][nx]) {
+				downhill = elev[ny][nx]
+			}
+			// Sea cells provide 0m base level — rivers carve to sea level.
+			slope := elev[y][x] - downhill
+			if slope <= 0 {
+				continue
+			}
+			next[y][x] -= erosionK * math.Pow(float64(accum[y][x]), erosionM) * slope
+		}
+	}
+	for y := range elev {
+		copy(elev[y], next[y])
+	}
+}
+
+// diffuseHillslope applies one step of hillslope diffusion, rounding sharp
+// inter-cell steps into smoother gradients. Only land cells participate.
+func diffuseHillslope(elev [][]float64, zones [][]BedrockZone) {
+	next := make([][]float64, Height)
+	for y := range elev {
+		next[y] = make([]float64, Width)
+		copy(next[y], elev[y])
+	}
+	for y := 0; y < Height; y++ {
+		for x := 0; x < Width; x++ {
+			if !isLandZone(zones[y][x]) {
+				continue
+			}
+			sum, count := 0.0, 0
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					nx, ny := x+dx, y+dy
+					if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+						continue
+					}
+					if !isLandZone(zones[ny][nx]) {
+						continue
+					}
+					sum += elev[ny][nx]
+					count++
+				}
+			}
+			if count == 0 {
+				continue
+			}
+			next[y][x] = elev[y][x] + diffusionD*(sum/float64(count)-elev[y][x])
+		}
+	}
+	for y := range elev {
+		copy(elev[y], next[y])
+	}
+}
+
+// Erosion model parameters for bedrock generation.
+// Stream-power incision + hillslope diffusion run on the initial
+// noise-seeded heights to produce physically-grounded terrain:
+// trunk valleys carved by high-drainage flows, stable mountain peaks
+// at drainage divides, smooth hillslope gradients in between.
 const (
-	smoothPasses    = 2     // box-filter passes; more = more diffuse
-	smoothThreshold = 500.0 // don't average across drops bigger than this — preserves cliffs and coasts
-	smoothWeight    = 0.3   // how strongly each pass blends self with neighborhood
+	erosionSteps = 15    // iterations to quasi-steady-state
+	erosionK     = 2e-3  // stream-power erodibility; larger = faster valley carving
+	erosionM     = 0.5   // drainage-area exponent (standard SPM value)
+	diffusionD   = 0.02  // hillslope diffusivity; smooths inter-cell noise
 )
 
 func generateBedrock(rng *rand.Rand) [][]BedrockCell {
@@ -127,56 +261,39 @@ func generateBedrock(rng *rand.Rand) [][]BedrockCell {
 		}
 	}
 
-	// Phase 2: zone-base + per-cell noise. Each zone has its own
-	// noise amplitude — mountains are jagged (±500m), plateaus are
-	// rolling (±200m), cradle is gentle (±50m), shelves and basin
-	// floors get small noise (±15..100m). RNG order: y outer, x
-	// inner, every cell consumes one Float64.
+	// Phase 2: initial heights — zone base + per-cell noise.
+	// Every cell gets noise for internal variation; sea cells hold these
+	// values throughout (neither erosion nor diffusion touches them);
+	// land cells use this as the starting point for erosion.
+	// RNG order: y outer, x inner, every cell consumes one Float64.
 	elev := make([][]float64, Height)
 	for y := 0; y < Height; y++ {
 		elev[y] = make([]float64, Width)
 		for x := 0; x < Width; x++ {
-			base := elevationForZone(zones[y][x])
-			amp := zoneAmplitude(zones[y][x])
+			z := zones[y][x]
+			base := roughElevationForZone(z)
+			amp := zoneAmplitude(z)
 			elev[y][x] = base + (rng.Float64()*2-1)*amp
 		}
 	}
 
-	// Phase 3: smoothing passes. For each cell, blend its elevation
-	// toward the average of its 8 neighbors — but only counting
-	// neighbors whose elevation is within smoothThreshold (so we
-	// preserve real terrain features: cliffs, mountain edges,
-	// coastlines all stay sharp). Within-zone noise gets smoothed
-	// into coherent gradients that water can flow down.
-	for pass := 0; pass < smoothPasses; pass++ {
-		next := make([][]float64, Height)
+	// Phase 3: stream-power erosion + hillslope diffusion.
+	// Carves trunk valleys from high-drainage-area cells; mountain peaks
+	// near drainage divides are stable (low A, slow erosion); hillslope
+	// diffusion rounds sharp noise into smooth gradients. Sea cells are
+	// held fixed throughout as boundary conditions.
+	for range erosionSteps {
+		flowDir := computeFlowDirections(elev)
+		accum := flowAccumulationFromElev(elev, flowDir)
+		erodeStreamPower(elev, zones, flowDir, accum)
+		diffuseHillslope(elev, zones)
 		for y := 0; y < Height; y++ {
-			next[y] = make([]float64, Width)
 			for x := 0; x < Width; x++ {
-				self := elev[y][x]
-				sum, count := self, 1.0
-				for dy := -1; dy <= 1; dy++ {
-					for dx := -1; dx <= 1; dx++ {
-						if dx == 0 && dy == 0 {
-							continue
-						}
-						nx, ny := x+dx, y+dy
-						if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
-							continue
-						}
-						n := elev[ny][nx]
-						if math.Abs(n-self) > smoothThreshold {
-							continue
-						}
-						sum += n
-						count++
-					}
+				if isLandZone(zones[y][x]) && elev[y][x] < 0 {
+					elev[y][x] = 0 // rivers can't carve below sea level
 				}
-				avg := sum / count
-				next[y][x] = self*(1-smoothWeight) + avg*smoothWeight
 			}
 		}
-		elev = next
 	}
 
 	// Phase 4: pack into BedrockCells.
