@@ -580,7 +580,6 @@ func (m *model) pathCellCost(x, y int64) int {
 	coord := [2]int64{x, y}
 	danger := m.dangerMap[coord]
 
-	// Rivers make any passable terrain trivial to traverse.
 	if m.riverAt[coord] != "" {
 		return 1 + danger
 	}
@@ -589,26 +588,8 @@ func (m *model) pathCellCost(x, y int64) int {
 	if !ok {
 		return -1
 	}
-	var base int
-	switch c.Kind {
-	case "seat", "march", "headwater", "outhold", "reach":
-		base = 2
-	case "pass":
-		base = 3
-	case "cradle", "forest", "tundra", "agraria", "agraria_upland":
-		base = 4
-	case "foothill":
-		base = 5
-	case "doab":
-		base = 6
-	case "marsh":
-		base = 8
-	case "plateau":
-		base = 15
-	case "den", "nest", "rookery":
-		base = 25
-	default:
-		// mountain, cliff, sea_brine, sea_eastern, glacier, lake, drowned
+	base := world.TravelCost(c.Kind)
+	if base < 0 {
 		return -1
 	}
 	return base + danger

@@ -3,7 +3,7 @@ package world
 import "math"
 
 // World coordinates: a global lat/lon system, equator at 0°, north
-// pole at +90°, south pole at -90°. The 60x22 map sits in the
+// pole at +90°, south pole at -90°. The 120×50 map sits in the
 // northern hemisphere at mid-to-high latitudes — roughly Anatolia
 // (south edge) up to Scandinavia (north edge), give or take.
 //
@@ -14,6 +14,26 @@ import "math"
 const (
 	DefaultLatTop    = 55.0 // degrees North, top edge of map
 	DefaultLatBottom = 30.0 // degrees North, bottom edge of map
+)
+
+// Milankovitch cycle periods (kiloyears).
+//
+// oblPeriod=410 places the obliquity maximum at kya=0 (warm present) and
+// the obliquity minimum at kya=205 (cold LGM), giving a single smooth
+// warm→cold arc across the canonical sim range. GlacialIndex is driven
+// by obliquity alone so the sea-level gradient is steady (~5m per 5-ka
+// keypress). eccPeriod=97 and precPeriod=23 are close to Earth's real
+// values; they shape the displayed OrbitalParams but do not affect
+// GlacialIndex.
+const (
+	oblPeriod  = 410.0 // obliquity — half-period matches kya=0→205 warm→cold arc
+	eccPeriod  = 97.0  // eccentricity (Earth ≈ 100 ka)
+	precPeriod = 23.0  // precession  (Earth ≈ 26 ka effective)
+
+	oblMean = 23.3 // degrees axial tilt, midpoint of oscillation
+	oblAmp  = 1.2  // degrees amplitude — range 22.1° to 24.5°
+	eccMean = 0.030
+	eccAmp  = 0.020 // range 0.010 to 0.050
 )
 
 // Latitude returns the degrees-N for map row y, given the latitude
@@ -27,82 +47,79 @@ func Latitude(y int, latTop, latBottom float64) float64 {
 	return latTop - frac*(latTop-latBottom)
 }
 
-// OrbitalParams describes the planet's current orbital configuration —
-// the Milankovitch knobs. These vary on slow cycles (~26kya, ~41kya,
-// ~100kya) and drive long-term climate change. Stored on the World;
-// not yet *consumed* by anything (next pass: derive ClimateState from
-// these instead of hardcoding per era).
+// OrbitalParams describes the planet's orbital configuration at a
+// given kya — the three Milankovitch knobs. Computed independently
+// from their respective cycles; used to derive NH summer insolation,
+// which drives GlacialIndex and ClimateState.
 type OrbitalParams struct {
-	// Obliquity: axial tilt in degrees. Earth: ~22.1° to ~24.5°
-	// (cycle ~41kya). Higher obliquity = stronger seasons + more
-	// summer melt at high latitude = ice sheets retreat.
+	// Obliquity: axial tilt in degrees. Cycle ~38 ka (Earth: ~41 ka).
+	// Higher obliquity = stronger seasons = more summer melt at high
+	// latitude = ice sheets retreat.
 	Obliquity float64
 
-	// Eccentricity: how elliptical the orbit is. Earth: ~0.003 to
-	// ~0.058 (cycle ~100kya). Modulates the strength of precession.
+	// Eccentricity: orbital ellipticity. Cycle ~97 ka (Earth: ~100 ka).
+	// Modulates how strongly precession affects seasonal insolation.
 	Eccentricity float64
 
-	// Precession: longitude of perihelion in degrees. Cycle ~26kya.
-	// Determines which season the planet is closest to the sun.
+	// Precession: longitude of perihelion in degrees. Cycle ~23 ka
+	// (Earth: ~26 ka effective). Determines which season the planet
+	// is closest to the sun.
 	Precession float64
 }
 
-// ClimateState is the climate at a moment in time. Right now it's
-// hand-filled per era; later it should be *derived* from
-// OrbitalParams + a deep-time clock so the climate emerges from the
-// orbital model rather than being declared.
+// ClimateState is the climate at a moment in time, derived from
+// Milankovitch orbital forcing rather than declared per era.
 type ClimateState struct {
 	// SeaLevelDelta is meters relative to present sea level.
 	// Negative during glacial peaks (water locked in ice sheets).
 	SeaLevelDelta float64
 
-	// GlacialIndex: 0 = present-day interglacial, 1 = full glacial peak.
+	// GlacialIndex: 0 = warmest interglacial in [0, KyaMax],
+	// 1 = coldest glacial peak.
 	GlacialIndex float64
 
 	// GlobalMeanTempDelta: degrees C relative to present global mean.
 	GlobalMeanTempDelta float64
 }
 
-// EarthNow approximates present-day Earth orbital configuration.
-func EarthNow() OrbitalParams {
-	return OrbitalParams{
-		Obliquity:    23.44,
-		Eccentricity: 0.0167,
-		Precession:   102.95,
-	}
-}
-
-// EarthGlacialPeak approximates an orbital configuration favorable to
-// continental ice sheet growth — low NH summer insolation. Numbers
-// are illustrative, not the literal 21kya Earth values.
-func EarthGlacialPeak() OrbitalParams {
-	return OrbitalParams{
-		Obliquity:    22.5,
-		Eccentricity: 0.020,
-		Precession:   180.0,
-	}
-}
-
-// GlacialIndex returns the climate-cycle position at a given kya
-// (kiloyears before present), in [0, 1]: 0 = warm interglacial peak,
-// 1 = full glacial peak.
+// OrbitalAt returns the orbital configuration at a given kya, computed
+// independently for each Milankovitch cycle.
 //
-// Modeled as a half-period cosine that puts a warm peak at kya=0
-// (the present-day Holocene) and a cold peak at kya=205 (our LGM).
-// One full warm-cold-warm cycle takes 410ka, so kya=410 is the prior
-// interglacial, kya=615 the prior cold peak, etc. Real-world climate
-// cycles are messier than this — eccentricity, obliquity, and
-// precession compound — but a single sinusoid suffices for now.
+// Phase conventions at kya=0 (present-day Holocene interglacial):
+//   - Obliquity at maximum (24.5°) — next peak at kya=410
+//   - Eccentricity at minimum (0.010) — next trough at kya=97
+//   - Precession ω=90° — perihelion near NH summer solstice, slightly
+//     favouring warm NH summers (Earth's actual ω is ~103°).
+func OrbitalAt(kya int) OrbitalParams {
+	t := float64(kya)
+	return OrbitalParams{
+		Obliquity:    oblMean + oblAmp*math.Cos(2*math.Pi*t/oblPeriod),
+		Eccentricity: eccMean - eccAmp*math.Cos(2*math.Pi*t/eccPeriod),
+		Precession:   math.Mod(90.0+360.0/precPeriod*t, 360.0),
+	}
+}
+
+// GlacialIndex returns the climate-cycle position at a given kya,
+// in [0, 1]: 0 = warmest interglacial (kya=0), 1 = coldest glacial peak (kya=205).
+//
+// Driven by obliquity alone so that the gradient is smooth and steady
+// across the sim's navigation range (~5m sea-level change per 5-ka
+// keypress). Eccentricity and precession appear in OrbitalAt for display
+// but do not feed into ice-volume or temperature calculations.
 func GlacialIndex(kya int) float64 {
 	if kya < 0 {
 		kya = 0
 	}
-	return 0.5 - 0.5*cos(math.Pi*float64(kya)/float64(KyaOldWorld))
+	if kya > KyaMax {
+		kya = KyaMax
+	}
+	obl := OrbitalAt(kya).Obliquity
+	return (oblMean + oblAmp - obl) / (2 * oblAmp)
 }
 
 // ClimateAt returns the climate state at a given kya. Sea level and
-// mean-temp delta lerp linearly with the glacial index between the
-// warm-peak (kya=0) and cold-peak (kya=205) anchor values.
+// mean-temp delta scale linearly with the glacial index between the
+// warm-peak (gI=0) and cold-peak (gI=1) anchor values.
 func ClimateAt(kya int) ClimateState {
 	gI := GlacialIndex(kya)
 	return ClimateState{
@@ -111,30 +128,6 @@ func ClimateAt(kya int) ClimateState {
 		GlobalMeanTempDelta: -8 * gI,
 	}
 }
-
-// OrbitalAt lerps orbital params between EarthNow and EarthGlacialPeak
-// proportional to GlacialIndex(kya). Real orbital params follow their
-// own periodicities (~26/41/100ka) and don't track glacial cycles
-// linearly — this is a placeholder that will become more correct when
-// we model the Milankovitch cycles directly.
-func OrbitalAt(kya int) OrbitalParams {
-	gI := GlacialIndex(kya)
-	now, peak := EarthNow(), EarthGlacialPeak()
-	return OrbitalParams{
-		Obliquity:    lerp(now.Obliquity, peak.Obliquity, gI),
-		Eccentricity: lerp(now.Eccentricity, peak.Eccentricity, gI),
-		Precession:   lerp(now.Precession, peak.Precession, gI),
-	}
-}
-
-// ClimateForEra and OrbitalForEra are kept as thin wrappers for
-// backward-compat callers that still pass an Era; new code should
-// call the kya-keyed variants directly.
-func ClimateForEra(era Era) ClimateState { return ClimateAt(era.Kya()) }
-func OrbitalForEra(era Era) OrbitalParams { return OrbitalAt(era.Kya()) }
-
-func lerp(a, b, t float64) float64 { return a + (b-a)*t }
-func cos(x float64) float64         { return math.Cos(x) }
 
 // glacierThreshold is the annual-mean surface temperature below which a
 // cell glaciates (in zones that *can* glaciate). Tuned so that the

@@ -19,9 +19,11 @@ const (
 
 	// KyaMax caps how far back the sim will run. Our lore covers ~250kya
 	// of human history (the Dawn at ~250kya); 300 gives a little
-	// pre-Dawn deep-time headroom without spilling into prior climate
-	// cycles, where the half-period cosine would loop the world back to
-	// looking like "now."
+	// pre-Dawn deep-time headroom. With oblPeriod=410 the model is a
+	// single warm→cold arc: kya=0 is the warm present, kya=205 is the
+	// coldest (LGM), and the pre-Dawn period (kya≈250-300) is still
+	// quite cold (gI≈0.67-0.91) — humans emerged during a world largely
+	// locked in ice.
 	KyaMax = 300
 )
 

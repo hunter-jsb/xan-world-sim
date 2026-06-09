@@ -678,304 +678,50 @@ func Generate(seed int64, kya int) World {
 		}
 	}
 
-	// Dragon dens — explicit lore target: "the Mountain Barrier is
-	// dotted with dragon-dens of varying scale." Detected as mountain
-	// cells at strict local elevation max in a 5×5 window (the inverse
-	// of passes — passes are saddles, dens are peaks). Greedy spatial
-	// dedup at min-sep 6 cells (~300km, the scale of a dragon's
-	// territory). Runs before pass detection so dens take precedence
-	// on the rare cell that's both a peak AND a saddle (shouldn't
-	// happen geometrically but the guard is cheap).
+	// Dragon dens — mountain peaks at strict local elevation max in a
+	// 5×5 window, min-sep 6 cells (~300km per dragon territory).
 	{
-		const denWindow = 2
-		const denMinSepSq = 6 * 6
-		regionAt := make(map[[2]int]int64, len(w.Regions))
-		elevAt := make(map[[2]int]float64, len(w.Regions))
-		for _, rc := range w.Regions {
-			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
-			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
-		}
-		type denCand struct {
-			x, y int
-			elev float64
-		}
-		var cands []denCand
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if rc.RegionID != RegionMountain {
-				continue
-			}
-			cx, cy := int(rc.X), int(rc.Y)
-			d := elevAt[[2]int{cx, cy}]
-			isMax := true
-			for dy := -denWindow; dy <= denWindow && isMax; dy++ {
-				for dx := -denWindow; dx <= denWindow && isMax; dx++ {
-					if dx == 0 && dy == 0 {
-						continue
-					}
-					n := [2]int{cx + dx, cy + dy}
-					if regionAt[n] != RegionMountain {
-						continue
-					}
-					nd := elevAt[n]
-					if nd > d {
-						isMax = false
-					} else if nd == d {
-						// E/S tiebreaker: lose ties to N/W
-						if dy < 0 || (dy == 0 && dx < 0) {
-							isMax = false
-						}
-					}
-				}
-			}
-			if isMax {
-				cands = append(cands, denCand{cx, cy, d})
-			}
-		}
-		// Sort by elevation desc — keep the most "dragonish" peaks first.
-		// Tiebreaker (Y, X) for determinism.
-		sort.Slice(cands, func(i, j int) bool {
-			if cands[i].elev != cands[j].elev {
-				return cands[i].elev > cands[j].elev
-			}
-			if cands[i].y != cands[j].y {
-				return cands[i].y < cands[j].y
-			}
-			return cands[i].x < cands[j].x
-		})
-		var picks []denCand
-		for _, c := range cands {
-			tooClose := false
-			for _, p := range picks {
-				dx := c.x - p.x
-				dy := c.y - p.y
-				if dx*dx+dy*dy < denMinSepSq {
-					tooClose = true
-					break
-				}
-			}
-			if tooClose {
-				continue
-			}
-			picks = append(picks, c)
-		}
-		denSet := make(map[[2]int64]bool, len(picks))
-		for _, p := range picks {
-			denSet[[2]int64{int64(p.x), int64(p.y)}] = true
-		}
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if denSet[[2]int64{rc.X, rc.Y}] {
-				rc.RegionID = RegionDragonDen
-			}
-		}
-		var nextID int64 = 1
-		for _, p := range picks {
+		picks := findAndMarkPeaks(w.Regions, RegionMountain, RegionDragonDen, 2, 6*6)
+		for i, p := range picks {
 			w.Dens = append(w.Dens, DenInfo{
-				ID:        nextID,
+				ID:        int64(i + 1),
 				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
 				X:         int64(p.x),
 				Y:         int64(p.y),
 				Elevation: p.elev,
 			})
-			nextID++
 		}
 	}
 
-	// Drake nests — the lesser cousin of dragon dens. Lore: drakes
-	// "den lower and more variably — caves at the foothill level."
-	// Detection mirrors dragon dens but on RegionFoothill cells, with
-	// half the spatial separation since drakes are "the everyday
-	// menace" — denser than dragons.
+	// Drake nests — foothill peaks, min-sep 4 cells (~200km). Drakes
+	// are "the everyday menace" — more numerous and closer-spaced than
+	// dragons.
 	{
-		const nestWindow = 2
-		const nestMinSepSq = 4 * 4
-		regionAt := make(map[[2]int]int64, len(w.Regions))
-		elevAt := make(map[[2]int]float64, len(w.Regions))
-		for _, rc := range w.Regions {
-			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
-			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
-		}
-		type nestCand struct {
-			x, y int
-			elev float64
-		}
-		var cands []nestCand
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if rc.RegionID != RegionFoothill {
-				continue
-			}
-			cx, cy := int(rc.X), int(rc.Y)
-			d := elevAt[[2]int{cx, cy}]
-			isMax := true
-			for dy := -nestWindow; dy <= nestWindow && isMax; dy++ {
-				for dx := -nestWindow; dx <= nestWindow && isMax; dx++ {
-					if dx == 0 && dy == 0 {
-						continue
-					}
-					n := [2]int{cx + dx, cy + dy}
-					if regionAt[n] != RegionFoothill {
-						continue
-					}
-					nd := elevAt[n]
-					if nd > d {
-						isMax = false
-					} else if nd == d {
-						if dy < 0 || (dy == 0 && dx < 0) {
-							isMax = false
-						}
-					}
-				}
-			}
-			if isMax {
-				cands = append(cands, nestCand{cx, cy, d})
-			}
-		}
-		sort.Slice(cands, func(i, j int) bool {
-			if cands[i].elev != cands[j].elev {
-				return cands[i].elev > cands[j].elev
-			}
-			if cands[i].y != cands[j].y {
-				return cands[i].y < cands[j].y
-			}
-			return cands[i].x < cands[j].x
-		})
-		var picks []nestCand
-		for _, c := range cands {
-			tooClose := false
-			for _, p := range picks {
-				dx := c.x - p.x
-				dy := c.y - p.y
-				if dx*dx+dy*dy < nestMinSepSq {
-					tooClose = true
-					break
-				}
-			}
-			if tooClose {
-				continue
-			}
-			picks = append(picks, c)
-		}
-		nestSet := make(map[[2]int64]bool, len(picks))
-		for _, p := range picks {
-			nestSet[[2]int64{int64(p.x), int64(p.y)}] = true
-		}
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if nestSet[[2]int64{rc.X, rc.Y}] {
-				rc.RegionID = RegionDrakeNest
-			}
-		}
-		var nextID int64 = 1
-		for _, p := range picks {
+		picks := findAndMarkPeaks(w.Regions, RegionFoothill, RegionDrakeNest, 2, 4*4)
+		for i, p := range picks {
 			w.Nests = append(w.Nests, NestInfo{
-				ID:        nextID,
+				ID:        int64(i + 1),
 				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
 				X:         int64(p.x),
 				Y:         int64(p.y),
 				Elevation: p.elev,
 			})
-			nextID++
 		}
 	}
 
-	// Wyvern rookeries — the densest of the dragon-family trio. Lore:
-	// "wyverns nest like raptors — cliffs, rookeries, mountain spires.
-	// Often colonial." Detection on RegionCliff cells using a tight
-	// 3x3 local-max window and min-sep 3 — wyverns crowd more than
-	// drakes or dragons. The cliff band naturally curves through the
-	// SW Rift, so rookeries land along that line.
+	// Wyvern rookeries — cliff peaks, min-sep 3 cells (~150km). Wyverns
+	// "nest like raptors — often colonial," so they crowd more tightly
+	// than drakes or dragons.
 	{
-		const rookWindow = 1
-		const rookMinSepSq = 3 * 3
-		regionAt := make(map[[2]int]int64, len(w.Regions))
-		elevAt := make(map[[2]int]float64, len(w.Regions))
-		for _, rc := range w.Regions {
-			regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
-			elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
-		}
-		type rookCand struct {
-			x, y int
-			elev float64
-		}
-		var cands []rookCand
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if rc.RegionID != RegionCliff {
-				continue
-			}
-			cx, cy := int(rc.X), int(rc.Y)
-			d := elevAt[[2]int{cx, cy}]
-			isMax := true
-			for dy := -rookWindow; dy <= rookWindow && isMax; dy++ {
-				for dx := -rookWindow; dx <= rookWindow && isMax; dx++ {
-					if dx == 0 && dy == 0 {
-						continue
-					}
-					n := [2]int{cx + dx, cy + dy}
-					if regionAt[n] != RegionCliff {
-						continue
-					}
-					nd := elevAt[n]
-					if nd > d {
-						isMax = false
-					} else if nd == d {
-						if dy < 0 || (dy == 0 && dx < 0) {
-							isMax = false
-						}
-					}
-				}
-			}
-			if isMax {
-				cands = append(cands, rookCand{cx, cy, d})
-			}
-		}
-		sort.Slice(cands, func(i, j int) bool {
-			if cands[i].elev != cands[j].elev {
-				return cands[i].elev > cands[j].elev
-			}
-			if cands[i].y != cands[j].y {
-				return cands[i].y < cands[j].y
-			}
-			return cands[i].x < cands[j].x
-		})
-		var picks []rookCand
-		for _, c := range cands {
-			tooClose := false
-			for _, p := range picks {
-				dx := c.x - p.x
-				dy := c.y - p.y
-				if dx*dx+dy*dy < rookMinSepSq {
-					tooClose = true
-					break
-				}
-			}
-			if tooClose {
-				continue
-			}
-			picks = append(picks, c)
-		}
-		rookSet := make(map[[2]int64]bool, len(picks))
-		for _, p := range picks {
-			rookSet[[2]int64{int64(p.x), int64(p.y)}] = true
-		}
-		for i := range w.Regions {
-			rc := &w.Regions[i]
-			if rookSet[[2]int64{rc.X, rc.Y}] {
-				rc.RegionID = RegionWyvernRookery
-			}
-		}
-		var nextID int64 = 1
-		for _, p := range picks {
+		picks := findAndMarkPeaks(w.Regions, RegionCliff, RegionWyvernRookery, 1, 3*3)
+		for i, p := range picks {
 			w.Rookeries = append(w.Rookeries, RookeryInfo{
-				ID:        nextID,
+				ID:        int64(i + 1),
 				Name:      generateName(nameSeedForCell(seed, int64(p.x), int64(p.y))),
 				X:         int64(p.x),
 				Y:         int64(p.y),
 				Elevation: p.elev,
 			})
-			nextID++
 		}
 	}
 
@@ -1154,15 +900,18 @@ func Generate(seed int64, kya int) World {
 					RegionOuthold, RegionReach:
 					return 2
 				case RegionPass:
+					return 3
+				case RegionCradle, RegionForest, RegionTundra,
+					RegionAgraria, RegionAgrariaUpland:
 					return 4
-				case RegionCradle, RegionForest, RegionTundra:
-					return 4
-				case RegionFoothill, RegionDoab:
+				case RegionFoothill:
+					return 5
+				case RegionDoab:
 					return 6
 				case RegionMarsh:
 					return 8
 				}
-				return -1 // impassable
+				return -1 // impassable (mountain, cliff, sea, glacier, lake, plateau)
 			}
 
 			const inf = 1 << 30
@@ -1501,5 +1250,85 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// peakCell is a local-maximum cell returned by findAndMarkPeaks.
+type peakCell struct{ x, y int; elev float64 }
+
+// findAndMarkPeaks finds local elevation maxima of targetZone cells in a
+// (2*window+1)² window, greedy-deduplicates by Euclidean distance
+// (minSepSq = min separation squared in cells), marks picked cells'
+// RegionID as featureZone, and returns the picks sorted by elevation desc.
+// E/S tiebreaker on equal-elevation neighbors: a cell wins ties against
+// its E/S neighbors, loses to N/W — guarantees a unique winner per flat plateau.
+func findAndMarkPeaks(regions []RegionCell, targetZone, featureZone int64, window, minSepSq int) []peakCell {
+	regionAt := make(map[[2]int]int64, len(regions))
+	elevAt := make(map[[2]int]float64, len(regions))
+	for _, rc := range regions {
+		regionAt[[2]int{int(rc.X), int(rc.Y)}] = rc.RegionID
+		elevAt[[2]int{int(rc.X), int(rc.Y)}] = rc.Elevation
+	}
+	var cands []peakCell
+	for _, rc := range regions {
+		if rc.RegionID != targetZone {
+			continue
+		}
+		cx, cy := int(rc.X), int(rc.Y)
+		d := elevAt[[2]int{cx, cy}]
+		isMax := true
+	checkNbrs:
+		for dy := -window; dy <= window; dy++ {
+			for dx := -window; dx <= window; dx++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				n := [2]int{cx + dx, cy + dy}
+				if regionAt[n] != targetZone {
+					continue
+				}
+				nd := elevAt[n]
+				if nd > d || (nd == d && (dy < 0 || (dy == 0 && dx < 0))) {
+					isMax = false
+					break checkNbrs
+				}
+			}
+		}
+		if isMax {
+			cands = append(cands, peakCell{cx, cy, d})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].elev != cands[j].elev {
+			return cands[i].elev > cands[j].elev
+		}
+		if cands[i].y != cands[j].y {
+			return cands[i].y < cands[j].y
+		}
+		return cands[i].x < cands[j].x
+	})
+	var picks []peakCell
+	for _, c := range cands {
+		tooClose := false
+		for _, p := range picks {
+			ddx, ddy := c.x-p.x, c.y-p.y
+			if ddx*ddx+ddy*ddy < minSepSq {
+				tooClose = true
+				break
+			}
+		}
+		if !tooClose {
+			picks = append(picks, c)
+		}
+	}
+	peakSet := make(map[[2]int64]bool, len(picks))
+	for _, p := range picks {
+		peakSet[[2]int64{int64(p.x), int64(p.y)}] = true
+	}
+	for i := range regions {
+		if peakSet[[2]int64{regions[i].X, regions[i].Y}] {
+			regions[i].RegionID = featureZone
+		}
+	}
+	return picks
 }
 
