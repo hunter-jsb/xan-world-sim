@@ -43,6 +43,31 @@ const claimRadius = 48
 // boundary between the "tributary" and "nominal" stances.
 const crownThreshold = 0.5
 
+// pressureAllegiancePenalty is the allegiance cost per point of dragon
+// pressure: defense demands military self-sufficiency, and
+// self-sufficiency breeds independence.
+const pressureAllegiancePenalty = 0.02
+
+// allegianceBase is a seat's crown-control score before dragon
+// pressure: logistic decay from the capital plus the tier's
+// disposition. Shared by the generation-time equilibrium
+// (computeAllegiance) and the year-by-year simulation (sim.go), so
+// the two formulas can never drift apart.
+func allegianceBase(L int, tier int64) float64 {
+	a := 1 / (1 + float64(L)/allegianceLambda)
+	switch tier {
+	case RegionSeat:
+		a += 0.15
+	case RegionMarch:
+		a += 0.05
+	case RegionOuthold:
+		a -= 0.15
+	case RegionReach:
+		a -= 0.30
+	}
+	return a
+}
+
 // AllegianceStance labels an allegiance score with the lore's
 // vocabulary for how a seat currently relates to the crown.
 func AllegianceStance(a float64) string {
@@ -233,18 +258,8 @@ func (w *World) computeAllegiance(capitalIdx int) {
 			s.Allegiance = 0 // unreachable: beyond the crown's world
 			continue
 		}
-		a := 1 / (1 + float64(L)/allegianceLambda)
-		switch s.Tier {
-		case RegionSeat:
-			a += 0.15
-		case RegionMarch:
-			a += 0.05
-		case RegionOuthold:
-			a -= 0.15
-		case RegionReach:
-			a -= 0.30
-		}
-		a -= 0.02 * s.Pressure
+		a := allegianceBase(L, s.Tier)
+		a -= pressureAllegiancePenalty * s.Pressure
 		s.Allegiance = min(max(a, 0), 1)
 	}
 }

@@ -368,18 +368,21 @@ func (w *World) placeOutholds() {
 // Barrier — live under constant dragon pressure... Risk falls off with
 // distance from the mountains." Computed as
 //
-//	pressure = max(0, raidRadius - chebyshev_distance_to_nearest_den)
+//	pressure = max(0, dragonRaidRadius - chebyshev_distance_to_nearest_den)
 //
-// at our cell size, raidRadius=12 cells ≈ 600km — the scale at which a
-// dragon's territory tapers off into safe heartland.
+// at our cell size, dragonRaidRadius=12 cells ≈ 600km — the scale at
+// which a dragon's territory tapers off into safe heartland. The
+// year-by-year simulation (sim.go) recomputes the same falloff with a
+// per-den activity weight, so the constant lives at package level.
+const dragonRaidRadius = 12
+
 func (w *World) applyDragonPressure() {
 	if len(w.Dens) == 0 || len(w.Seats) == 0 {
 		return
 	}
-	const raidRadius = 12
 	for i := range w.Seats {
 		s := &w.Seats[i]
-		minD := raidRadius
+		minD := dragonRaidRadius
 		for _, d := range w.Dens {
 			dx := int(s.X - d.X)
 			if dx < 0 {
@@ -391,7 +394,7 @@ func (w *World) applyDragonPressure() {
 			}
 			minD = min(minD, max(dx, dy))
 		}
-		if p := raidRadius - minD; p > 0 {
+		if p := dragonRaidRadius - minD; p > 0 {
 			s.Pressure = float64(p)
 		}
 	}

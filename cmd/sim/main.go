@@ -91,6 +91,20 @@ type model struct {
 	expGen    int
 	dangerMap map[[2]int64]int
 
+	// Simulation mode (simmode.go): the current kya pinned as a slice
+	// of deep time, with the political layer running year by year.
+	// simGen invalidates stale year ticks. preSim* stash the deep-time
+	// state the sim overlays — seats and territory rows, and the view
+	// mode — restored verbatim on exit (the sim never touches the DB).
+	simMode         bool
+	sim             *world.Sim
+	simGen          int
+	simPaused       bool
+	simSpeed        int // index into simSpeeds
+	preSimSeats     []db.GetSeatsInBoundsRow
+	preSimTerritory []db.GetTerritoryInBoundsRow
+	preSimPolitical bool
+
 	minX, minY, maxX, maxY int64
 }
 
@@ -138,7 +152,10 @@ const (
 	popDepart    popupAction = "depart"          // confirm a proposed expedition
 	popCancelExp popupAction = "cancel-expedition"
 	popConclude  popupAction = "conclude-expedition"
-	popJumpPOI   popupAction = "jump-poi" // arg = index into m.pois
+	popJumpPOI   popupAction = "jump-poi"   // arg = index into m.pois
+	popExitSim   popupAction = "exit-sim"   // leave simulation mode
+	popJumpXY    popupAction = "jump-xy"    // jump cursor to the popup's cell
+	popJumpEvent popupAction = "jump-event" // arg = index into m.sim.Log
 )
 
 type popupOption struct {
@@ -237,7 +254,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.popup.sel = (m.popup.sel + 1) % len(m.popup.opts)
 					m.mapStr = m.buildMap()
 				}
-			case "enter", " ":
+			// Space deliberately doesn't choose: in sim mode a major
+			// event popup can open the frame before a reflexive
+			// space-to-pause, and choosing "Jump there" by accident
+			// teleports the cursor. Enter is the advertised key.
+			case "enter":
 				if len(m.popup.opts) == 0 {
 					return m.dismissPopup()
 				}
@@ -253,7 +274,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.abandonExpedition()
 				return m, nil
 			}
+			if m.simMode {
+				m.openSimExitPopup()
+				return m, nil
+			}
 			return m, tea.Quit
+
+		// Simulation mode: S pins the current kya as a slice of deep
+		// time and lets politics run year by year; pressing it again
+		// (or esc) asks before returning to deep time.
+		case "S":
+			if m.simMode {
+				m.openSimExitPopup()
+				return m, nil
+			}
+			return m, m.enterSimCmd()
+		case " ":
+			if m.simMode {
+				m.simPaused = !m.simPaused
+				if m.simPaused {
+					m.status = "the years hold — space resumes"
+				} else {
+					m.status = "the years resume"
+				}
+			}
+		case "<":
+			if m.simMode && m.simSpeed > 0 {
+				m.simSpeed--
+				m.status = "speed " + simSpeedNames[m.simSpeed]
+			}
+		case ">":
+			if m.simMode && m.simSpeed < len(simSpeeds)-1 {
+				m.simSpeed++
+				m.status = "speed " + simSpeedNames[m.simSpeed]
+			}
+		case "L":
+			m.openChroniclePopup()
 		case "enter":
 			m.openCellPopup()
 		case "r":
@@ -383,6 +439,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case simTickMsg:
+		return m, m.handleSimTick(msg)
+
+	case simReadyMsg:
+		// Discard a sim built for a moment the user scrubbed away from
+		// (or if one is somehow already running).
+		if msg.gen != m.simGen || msg.seed != m.seed || msg.kya != m.kya || m.simMode {
+			return m, nil
+		}
+		return m, m.startSim(msg.sim)
+
 	case expTickMsg:
 		if m.exp == nil || m.exp.phase != expRunning || msg.gen != m.expGen {
 			return m, nil // stale tick from an abandoned expedition
@@ -426,11 +493,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data = msg.data
 		m.buildLookups()
 		m.rebuildGrid()
-		// World changed — terrain costs shift, so a stale expedition
-		// (or a popup about the old world) is meaningless now.
-		m.exp = nil
-		m.expGen++
-		m.popup = nil
+		if m.simMode {
+			// A regen launched before the slice was pinned (an
+			// in-flight scrub) landed mid-simulation. It's for this
+			// same (seed, kya) — the staleness check above proved it —
+			// so refresh the deep-time stash and re-overlay the sim's
+			// politics; expeditions and popups stay valid.
+			m.preSimSeats = m.data.seats
+			m.preSimTerritory = m.data.territory
+			m.applySimData(true)
+		} else {
+			// World changed — terrain costs shift, so a stale expedition
+			// (or a popup about the old world) is meaningless now.
+			m.exp = nil
+			m.expGen++
+			m.popup = nil
+		}
 		m.mapStr = m.buildMap()
 		m.era = msg.era
 		m.status = ""
@@ -573,6 +651,13 @@ func (m model) View() string {
 	if m.politicalMode {
 		title += dimStyle.Render("   [") + statusStyle.Render("political") + dimStyle.Render("]")
 	}
+	if m.simMode && m.sim != nil {
+		run := "▸"
+		if m.simPaused {
+			run = "‖"
+		}
+		title += dimStyle.Render("   sim: ") + seedStyle.Render(fmt.Sprintf("year %d %s%s", m.sim.Year, run, simSpeedNames[m.simSpeed]))
+	}
 	if m.seed != 0 {
 		title += dimStyle.Render("   seed: ") + seedStyle.Render(fmt.Sprintf("%d", m.seed))
 	}
@@ -590,14 +675,21 @@ func (m model) View() string {
 	case m.popup != nil:
 		hints = append(hints, "↑↓ select   enter choose   esc close")
 	default:
-		if m.exp != nil {
+		switch {
+		case m.exp != nil:
 			switch m.exp.phase {
 			case expRunning:
 				hints = append(hints, fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays()))
 			case expArrived:
 				hints = append(hints, "s conclude expedition")
 			}
-		} else {
+		case m.simMode:
+			pause := "space pause"
+			if m.simPaused {
+				pause = "space resume"
+			}
+			hints = append(hints, pause, "< > speed", "L chronicle", "S leave")
+		default:
 			hints = append(hints, "enter inspect")
 		}
 		hints = append(hints, "H help", "q quit")
@@ -712,15 +804,19 @@ type expHeapItem struct {
 }
 
 // deepTimeLocked reports whether kya scrubbing and rerolls are blocked
-// — true whenever an expedition exists. A caravan lives inside one
-// frozen moment of deep time; scrubbing would dissolve the world under
-// its feet. Sets the status line as a side effect.
+// — true whenever an expedition exists or a simulation is running.
+// Both live inside one frozen moment of deep time; scrubbing would
+// dissolve the world under them. Sets the status line as a side effect.
 func (m *model) deepTimeLocked() bool {
-	if m.exp == nil {
-		return false
+	if m.exp != nil {
+		m.status = "deep time is locked while an expedition is afield (s abandons)"
+		return true
 	}
-	m.status = "deep time is locked while an expedition is afield (s abandons)"
-	return true
+	if m.simMode {
+		m.status = "deep time is pinned while the simulation runs (S returns)"
+		return true
+	}
+	return false
 }
 
 func (m *model) abandonExpedition() {
@@ -760,6 +856,19 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 			p := m.pois[opt.arg]
 			m.curX, m.curY = p.X, p.Y
 			m.status = fmt.Sprintf("→ %s (%s)", p.Name, render.KindDisplay(p.Kind))
+		}
+
+	case popExitSim:
+		m.exitSim()
+
+	case popJumpXY:
+		m.curX, m.curY = pop.cellX, pop.cellY
+
+	case popJumpEvent:
+		if m.sim != nil && opt.arg >= 0 && opt.arg < len(m.sim.Log) {
+			e := m.sim.Log[opt.arg]
+			m.curX, m.curY = e.X, e.Y
+			m.status = fmt.Sprintf("year %d — %s", e.Year, e.Text)
 		}
 
 	case popSendExp:
@@ -865,6 +974,7 @@ func (m *model) openHelpPopup() {
 		dimStyle.Render("hjkl / arrows cursor   w / b next/prev place   o list places"),
 		dimStyle.Render("enter inspect cell   s expedition to cursor   p political map"),
 		dimStyle.Render("] / [ ±5ka   } / { (or shift+arrows) ±25ka   e now/LGM   r reroll"),
+		dimStyle.Render("S simulate this slice — politics run year by year (space pause, < > speed, L chronicle)"),
 		dimStyle.Render("H help   q quit"))
 	m.popup = &popupState{
 		title: "the cradle — legend & keys",
