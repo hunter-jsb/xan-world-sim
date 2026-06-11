@@ -24,7 +24,8 @@ func simFingerprint(s *Sim) string {
 	}
 	fmt.Fprintf(&b, "patches=%d\n", len(s.patches))
 	for _, e := range s.Log {
-		fmt.Fprintf(&b, "y%d [%s] %s @(%d,%d) major=%v\n", e.Year, e.Kind, e.Text, e.X, e.Y, e.Major)
+		fmt.Fprintf(&b, "y%d [%s] %s | %s @(%d,%d) major=%v cause=%d\n",
+			e.Year, e.Kind, e.Text, e.Detail, e.X, e.Y, e.Major, e.Cause)
 	}
 	return b.String()
 }
@@ -177,6 +178,56 @@ func TestSim_DynamicBorders(t *testing.T) {
 	checkPolity(t, *s.W)
 }
 
+// TestSim_CauseWeb: the chronicle is a causal web, not a list. Every
+// cause points strictly backward; war children (raids, captures,
+// peaces) point at a war declaration; resettlement foundings point at
+// the sacking they undo; and at least some wars trace their grievance
+// to a secession or capture — the headline reads as history.
+func TestSim_CauseWeb(t *testing.T) {
+	s := NewSim(42, 0)
+	for y := 0; y < 3000; y++ {
+		s.StepYear()
+	}
+	causedWars, detailed := 0, 0
+	for i, e := range s.Log {
+		if e.Cause >= i {
+			t.Fatalf("event %d (%s) causes itself or the future (%d)", i, e.Kind, e.Cause)
+		}
+		if e.Detail != "" {
+			detailed++
+		}
+		if e.Cause < 0 {
+			continue
+		}
+		parent := s.Log[e.Cause]
+		switch e.Kind {
+		case "raid", "capture", "peace":
+			if parent.Kind != "war" {
+				t.Errorf("%s event's cause is %q, want a war declaration", e.Kind, parent.Kind)
+			}
+		case "war":
+			causedWars++
+			if parent.Kind != "secede" && parent.Kind != "capture" {
+				t.Errorf("war's grievance source is %q, want secede or capture", parent.Kind)
+			}
+		case "ruin", "secede", "swear":
+			if parent.Kind != "lair" && parent.Kind != "succession" {
+				t.Errorf("%s event's cause is %q, want lair or succession", e.Kind, parent.Kind)
+			}
+		case "founding":
+			if parent.Kind != "ruin" {
+				t.Errorf("founding's cause is %q, want the ruin it resettles", parent.Kind)
+			}
+		}
+	}
+	if causedWars == 0 {
+		t.Error("no war traces its grievance to an event — the web never connects")
+	}
+	if detailed == 0 {
+		t.Error("no event carries an impact detail")
+	}
+}
+
 // TestSim_Wars: grievance must become war, war must capture and must
 // end. Every war that began has ended (or still stands at the close);
 // no standing war references a dead realm.
@@ -214,6 +265,7 @@ func checkSimArrays(t *testing.T, s *Sim) {
 		"base": len(s.base), "temperament": len(s.temperament), "stance": len(s.stance),
 		"lowStreak": len(s.lowStreak), "highStreak": len(s.highStreak), "ruinStreak": len(s.ruinStreak),
 		"house": len(s.house), "houseSince": len(s.houseSince), "reignEnd": len(s.reignEnd),
+		"seatCrisisIdx": len(s.seatCrisisIdx),
 	} {
 		if l != n {
 			t.Errorf("array %s has %d entries, %d seats", name, l, n)

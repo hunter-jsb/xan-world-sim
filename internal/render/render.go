@@ -209,15 +209,18 @@ const (
 	roadColor    = "180"
 	pathColor    = "220" // amber gold — the road ahead
 	pathDimColor = "94"  // walked trail — dark gold, already behind the caravan
+	pathHotColor = "203" // alarm salmon-red — event pings, something just happened here
 )
 
 // PathCell is one step on an expedition route, with the directional glyph
 // indicating which way the traveller moves to the next cell. Dim marks
-// trail the caravan has already walked.
+// trail the caravan has already walked; Hot marks event pings — the
+// simulation overlays them where its news just broke.
 type PathCell struct {
 	X, Y int64
 	G    rune // from DirectionalGlyph; '@' for the caravan, 'X' destination
 	Dim  bool
+	Hot  bool
 }
 
 var (
@@ -487,13 +490,14 @@ func (gb *GridBuf) Render(curX, curY int64, path []PathCell) string {
 		col int
 		g   rune
 		dim bool
+		hot bool
 	}
 	pathOverlay := make(map[int][]entry, len(path))
 	for _, p := range path {
 		row := int(p.Y - gb.minY)
 		col := int(p.X - gb.minX)
 		if row >= 0 && row < height {
-			pathOverlay[row] = append(pathOverlay[row], entry{col, p.G, p.Dim})
+			pathOverlay[row] = append(pathOverlay[row], entry{col, p.G, p.Dim, p.Hot})
 		}
 	}
 
@@ -522,10 +526,19 @@ func (gb *GridBuf) Render(curX, curY int64, path []PathCell) string {
 			isCursor := j == curColInRow
 			if e, isPath := colEntry[j]; isPath {
 				color := pathColor
-				if e.dim {
+				switch {
+				case e.hot:
+					color = pathHotColor
+				case e.dim:
 					color = pathDimColor
 				}
-				appendCell(&b, color, !e.dim, isCursor, e.g)
+				// A zero glyph recolors the cell without replacing it —
+				// event pings tint the hall or terrain they happened on.
+				g := e.g
+				if g == 0 {
+					g = c.g
+				}
+				appendCell(&b, color, !e.dim, isCursor, g)
 			} else {
 				appendCell(&b, c.color, c.bold, isCursor, c.g)
 			}

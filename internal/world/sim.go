@@ -142,14 +142,23 @@ const (
 const sliceYears = 1000
 
 // SimEvent is one entry in a slice's chronicle. Major events are the
-// ones the TUI interrupts for (membership and epoch changes); minor
-// ones (stances, lair tempers) just stream past.
+// headlines (membership, ruin, war, epoch); minor ones (stances, lair
+// tempers, raids) stream past. Nothing pauses the simulation — the
+// TUI pings the map and the chronicle keeps the record.
+//
+// Cause is the chronicle index of the event this one grew from
+// (-1 = none): a ruin points at the dragon's stir, a war at the
+// grievance that seeded it, a capture at its war's declaration — so
+// the chronicle reads as a causal web, not a list. Detail is one
+// extra line of impact ("the crown is left with 9 halls").
 type SimEvent struct {
-	Year  int
-	Kind  string // "stance", "secede", "swear", "dissolve", "lair", "epoch"
-	Text  string
-	X, Y  int64
-	Major bool
+	Year   int
+	Kind   string // "stance", "secede", "swear", "dissolve", "lair", "epoch", "succession", "ruin", "founding", "war", "raid", "capture", "peace"
+	Text   string
+	Detail string
+	X, Y   int64
+	Major  bool
+	Cause  int
 }
 
 // lairTemperText holds each lair kind's four temper-transition lines:
@@ -228,6 +237,14 @@ type Sim struct {
 	grievance map[[2]int64]float64
 	borders   map[[2]int64]int
 
+	// Cause bookkeeping for the chronicle's web: the latest temper
+	// event per lair, the latest succession crisis per seat (indexed
+	// like W.Seats), and the event that last poured grievance into
+	// each realm pair. All hold chronicle indexes, -1/absent = none.
+	lairEventIdx  []int
+	seatCrisisIdx []int
+	grievanceSrc  map[[2]int64]int
+
 	// Dynamic borders (sim_borders.go): the static logistic cost of
 	// every cell, the contested marchland set, a version stamp the
 	// TUI uses to notice border refreshes, and the reusable Dijkstra
@@ -241,10 +258,13 @@ type Sim struct {
 }
 
 // war is one running conflict; Score > 0 favors the declarer A.
+// declIdx is the declaration's chronicle index — raids, captures, and
+// the peace all point back at it.
 type war struct {
-	A, B  int64 // realm IDs; A declared
-	Start int
-	Score float64
+	A, B    int64 // realm IDs; A declared
+	Start   int
+	Score   float64
+	declIdx int
 }
 
 // Wars exposes the active conflicts (for the TUI's realm dossiers).
@@ -320,11 +340,13 @@ func (s *Sim) RealmLineage(realmID int64) string {
 }
 
 // RuinSite is a hall lost during this slice — it stays on the map as
-// a ruin until (unless) someone raises it again.
+// a ruin until (unless) someone raises it again. EventIdx is the
+// sacking's chronicle entry; a resettlement points back at it.
 type RuinSite struct {
-	X, Y int64
-	Name string
-	Year int
+	X, Y     int64
+	Name     string
+	Year     int
+	EventIdx int
 }
 
 // CellPatch is one map-cell kind change the sim has made (a hall
@@ -401,9 +423,14 @@ func NewSim(seed int64, kya int) *Sim {
 		s.riverAt[[2]int64{r.X, r.Y}] = true
 	}
 	s.grievance = make(map[[2]int64]float64)
+	s.grievanceSrc = make(map[[2]int64]int)
 	s.contested = make(map[[2]int64]bool)
 	s.buildCostGrid()
 	s.recomputeBorders()
+	s.seatCrisisIdx = make([]int, len(w.Seats))
+	for i := range s.seatCrisisIdx {
+		s.seatCrisisIdx[i] = -1
+	}
 
 	// Heritage lines: each hall's founding house is as deterministic as
 	// its name (same cell coordinates, salted stream); the sitting
@@ -422,8 +449,10 @@ func NewSim(seed int64, kya int) *Sim {
 	s.activity = make([]float64, len(s.lairs))
 	s.lairState = make([]int, len(s.lairs))
 	s.lairNoted = make([]bool, len(s.lairs))
+	s.lairEventIdx = make([]int, len(s.lairs))
 	for i := range s.activity {
 		s.activity[i] = 1
+		s.lairEventIdx[i] = -1
 	}
 	s.recomputeLairNoted()
 	return s
@@ -443,16 +472,23 @@ func (s *Sim) recomputeLairNoted() {
 	}
 }
 
+// emitFn appends one event to the chronicle with its causal parent
+// (-1 = none) and returns its chronicle index, so later events can
+// point back at it.
+type emitFn func(cause int, e SimEvent) int
+
 // StepYear advances the slice one year and returns the year's events
-// (also appended to the chronicle). Order is fixed for determinism:
-// dragons stir, pressure lands, courts drift, stances settle,
-// membership breaks last.
+// (a view into the chronicle). Order is fixed for determinism:
+// dragons stir, pressure lands, courts drift, stances settle, bonds
+// break, halls fall and rise, wars run, borders re-settle.
 func (s *Sim) StepYear() []SimEvent {
 	s.Year++
-	var events []SimEvent
-	emit := func(e SimEvent) {
+	start := len(s.Log)
+	emit := func(cause int, e SimEvent) int {
 		e.Year = s.Year
-		events = append(events, e)
+		e.Cause = cause
+		s.Log = append(s.Log, e)
+		return len(s.Log) - 1
 	}
 
 	s.stepLairs(emit)
@@ -481,14 +517,24 @@ func (s *Sim) StepYear() []SimEvent {
 		if s.capitalIdx >= 0 {
 			x, y = s.W.Seats[s.capitalIdx].X, s.W.Seats[s.capitalIdx].Y
 		}
-		emit(SimEvent{
+		emit(-1, SimEvent{
 			Kind: "epoch", Major: true, X: x, Y: y,
 			Text: "a thousand years have passed — the slice has run its course; deeper change belongs to deep time",
 		})
 	}
 
-	s.Log = append(s.Log, events...)
-	return events
+	return s.Log[start:]
+}
+
+// realmHallCount counts a realm's living halls.
+func (s *Sim) realmHallCount(id int64) int {
+	n := 0
+	for i := range s.W.Seats {
+		if s.W.Seats[i].RealmID == id {
+			n++
+		}
+	}
+	return n
 }
 
 // lairWalkSigma is the per-tier volatility of a lair's activity walk.
@@ -509,7 +555,7 @@ func lairWalkSigma(kind string) float64 {
 // exactly). Temper changes enter the chronicle only for lairs with a
 // seat in raid range: the courts record what reaches their walls, the
 // rest is weather.
-func (s *Sim) stepLairs(emit func(SimEvent)) {
+func (s *Sim) stepLairs(emit emitFn) {
 	for i, l := range s.lairs {
 		a := s.activity[i] + s.rng.NormFloat64()*lairWalkSigma(l.Kind)
 		if a < 0 {
@@ -537,10 +583,22 @@ func (s *Sim) stepLairs(emit func(SimEvent)) {
 		}
 		// Courts chronicle every dragon mood, but for lesser lairs only
 		// the threat's arrival (rampant/dormant onset) is news — its
-		// passing is taken for granted.
+		// passing is taken for granted. The latest temper event is
+		// remembered per lair: ruins and secessions point back at it.
 		if temper >= 0 && s.lairNoted[i] && (l.Kind == "dragon" || temper < 2) {
-			emit(SimEvent{Kind: "lair", X: l.X, Y: l.Y,
-				Text: fmt.Sprintf(lairTemperText[l.Kind][temper], l.Name)})
+			detail := ""
+			if temper == 0 {
+				n := 0
+				for _, st := range s.W.Seats {
+					if lairPressureAt(l, st.X, st.Y, 1) > 0 {
+						n++
+					}
+				}
+				detail = fmt.Sprintf("%d halls under its shadow", n)
+			}
+			s.lairEventIdx[i] = emit(-1, SimEvent{Kind: "lair", X: l.X, Y: l.Y,
+				Text:   fmt.Sprintf(lairTemperText[l.Kind][temper], l.Name),
+				Detail: detail})
 		}
 	}
 
@@ -566,7 +624,7 @@ func (s *Sim) recomputePressure() {
 // stepAllegiance drifts every reachable seat toward its current
 // equilibrium — the geographic base, colored by temperament, taxed by
 // this year's dragon pressure — and reports stance changes.
-func (s *Sim) stepAllegiance(emit func(SimEvent)) {
+func (s *Sim) stepAllegiance(emit emitFn) {
 	if s.capitalIdx < 0 {
 		return // no crown to be loyal to; the courts sleep
 	}
@@ -592,7 +650,7 @@ func (s *Sim) stepAllegiance(emit func(SimEvent)) {
 				verb = "slips to"
 			}
 			s.stance[i] = next
-			emit(SimEvent{Kind: "stance", X: st.X, Y: st.Y,
+			emit(-1, SimEvent{Kind: "stance", X: st.X, Y: st.Y,
 				Text: fmt.Sprintf("%s %s %s allegiance", st.Name, verb, next)})
 		}
 	}
@@ -604,7 +662,7 @@ func (s *Sim) stepAllegiance(emit func(SimEvent)) {
 // not a map). Smooth successions pass unchronicled — the record keeps
 // ruptures: a failed line shakes its hall's allegiance, and a failed
 // line *on the throne* ripples doubt through every sworn hall.
-func (s *Sim) stepSuccessions(emit func(SimEvent)) {
+func (s *Sim) stepSuccessions(emit emitFn) {
 	for i := range s.W.Seats {
 		if s.Year < s.reignEnd[i] {
 			continue
@@ -625,15 +683,16 @@ func (s *Sim) stepSuccessions(emit func(SimEvent)) {
 					s.W.Seats[j].Allegiance = max(s.W.Seats[j].Allegiance-crownCrisisDoubt, 0)
 				}
 			}
-			emit(SimEvent{Kind: "succession", Major: true, X: st.X, Y: st.Y,
+			s.seatCrisisIdx[i] = emit(-1, SimEvent{Kind: "succession", Major: true, X: st.X, Y: st.Y,
 				Text: fmt.Sprintf("the line of %s fails on the throne of %s — House %s takes the crown, and doubt ripples outward",
-					old, st.Name, s.house[i])})
+					old, st.Name, s.house[i]),
+				Detail: fmt.Sprintf("doubt brushes %d sworn halls", s.realmHallCount(s.crownID)-1)})
 			continue
 		}
 		if s.base[i] >= 0 {
 			st.Allegiance = max(st.Allegiance-successionCrisisDoubt, 0)
 		}
-		emit(SimEvent{Kind: "succession", X: st.X, Y: st.Y,
+		s.seatCrisisIdx[i] = emit(-1, SimEvent{Kind: "succession", X: st.X, Y: st.Y,
 			Text: fmt.Sprintf("the line of %s fails in %s — House %s takes the hall", old, st.Name, s.house[i])})
 	}
 }
@@ -643,7 +702,7 @@ func (s *Sim) stepSuccessions(emit func(SimEvent)) {
 // that have held above swearThreshold for swearYears bend the knee.
 // Returns whether any membership changed (territory must then be
 // re-claimed).
-func (s *Sim) stepMembership(emit func(SimEvent)) bool {
+func (s *Sim) stepMembership(emit emitFn) bool {
 	if s.crownID == 0 {
 		return false
 	}
@@ -682,11 +741,39 @@ func (s *Sim) stepMembership(emit func(SimEvent)) bool {
 	return changed
 }
 
+// unrestCause attributes a hall's collapse for the chronicle's web:
+// the latest temper event of the lair pressing it hardest (when the
+// pressure is real and the news is recent), else a recent succession
+// crisis at the hall, else nothing.
+func (s *Sim) unrestCause(i int) int {
+	st := s.W.Seats[i]
+	if st.Pressure >= 4 {
+		best, bestP := -1, 0.0
+		for j, l := range s.lairs {
+			if p := lairPressureAt(l, st.X, st.Y, s.activity[j]); p > bestP {
+				best, bestP = j, p
+			}
+		}
+		// A lair that is rampant *now* owns the unrest no matter how
+		// long ago it stirred — dragons besiege for decades. A calmer
+		// lair only counts while its news is recent.
+		if best >= 0 && s.lairEventIdx[best] >= 0 &&
+			(s.lairState[best] == 1 || s.Year-s.Log[s.lairEventIdx[best]].Year <= 40) {
+			return s.lairEventIdx[best]
+		}
+	}
+	if idx := s.seatCrisisIdx[i]; idx >= 0 && s.Year-s.Log[idx].Year <= 25 {
+		return idx
+	}
+	return -1
+}
+
 // secede pulls seat i out of the crown realm: it joins the nearest
 // independent league within enclaveRadius (any member hall counts as a
 // door), or stands alone as a new league bearing its own name.
-func (s *Sim) secede(i int, emit func(SimEvent)) {
+func (s *Sim) secede(i int, emit emitFn) {
 	st := &s.W.Seats[i]
+	cause := s.unrestCause(i)
 	dist := s.W.logisticCostFrom([][2]int{{int(st.X), int(st.Y)}})
 
 	bestRealm := int64(0)
@@ -710,8 +797,11 @@ func (s *Sim) secede(i int, emit func(SimEvent)) {
 	if bestRealm != 0 {
 		st.RealmID = bestRealm
 		s.grievance[pairKey(bestRealm, s.crownID)] += grievanceSecede
-		emit(SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
-			Text: fmt.Sprintf("%s renounces the crown and joins the league of %s", st.Name, s.realmName(bestRealm))})
+		idx := emit(cause, SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
+			Text: fmt.Sprintf("%s renounces the crown and joins the league of %s", st.Name, s.realmName(bestRealm)),
+			Detail: fmt.Sprintf("the league of %s now counts %d halls; the crown %d",
+				s.realmName(bestRealm), s.realmHallCount(bestRealm), s.realmHallCount(s.crownID))})
+		s.grievanceSrc[pairKey(bestRealm, s.crownID)] = idx
 		return
 	}
 
@@ -725,25 +815,30 @@ func (s *Sim) secede(i int, emit func(SimEvent)) {
 	s.lineage[s.nextRealmID] = fmt.Sprintf("sundered from the crown of %s in year %d, under House %s",
 		s.realmName(s.crownID), s.Year, s.house[i])
 	s.grievance[pairKey(s.nextRealmID, s.crownID)] += grievanceSecede
+	idx := emit(cause, SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
+		Text:   fmt.Sprintf("%s renounces the crown and stands alone — the league of %s", st.Name, st.Name),
+		Detail: fmt.Sprintf("the crown is left with %d halls", s.realmHallCount(s.crownID))})
+	s.grievanceSrc[pairKey(s.nextRealmID, s.crownID)] = idx
 	s.nextRealmID++
-	emit(SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
-		Text: fmt.Sprintf("%s renounces the crown and stands alone — the league of %s", st.Name, st.Name)})
 }
 
 // swear moves seat i into the crown realm. If its old league is left
 // without a single hall, the league dissolves.
-func (s *Sim) swear(i int, emit func(SimEvent)) {
+func (s *Sim) swear(i int, emit emitFn) {
 	st := &s.W.Seats[i]
 	oldRealm := st.RealmID
 	st.RealmID = s.crownID
-	emit(SimEvent{Kind: "swear", Major: true, X: st.X, Y: st.Y,
-		Text: fmt.Sprintf("%s swears to the crown of %s", st.Name, s.realmName(s.crownID))})
+	idx := emit(s.unrestCause(i), SimEvent{Kind: "swear", Major: true, X: st.X, Y: st.Y,
+		Text: fmt.Sprintf("%s swears to the crown of %s", st.Name, s.realmName(s.crownID)),
+		Detail: fmt.Sprintf("the crown now counts %d halls; %s is left with %d",
+			s.realmHallCount(s.crownID), s.realmName(oldRealm), s.realmHallCount(oldRealm))})
 
-	s.maybeDissolve(oldRealm, emit)
+	s.maybeDissolve(oldRealm, emit, idx)
 }
 
 // maybeDissolve removes a realm that no longer holds a single hall.
-func (s *Sim) maybeDissolve(realmID int64, emit func(SimEvent)) {
+// cause is the event that emptied it.
+func (s *Sim) maybeDissolve(realmID int64, emit emitFn, cause int) {
 	if realmID == 0 {
 		return
 	}
@@ -755,7 +850,7 @@ func (s *Sim) maybeDissolve(realmID int64, emit func(SimEvent)) {
 	for j, r := range s.W.Realms {
 		if r.ID == realmID {
 			s.W.Realms = append(s.W.Realms[:j], s.W.Realms[j+1:]...)
-			emit(SimEvent{Kind: "dissolve", Major: true, X: r.SeatX, Y: r.SeatY,
+			emit(cause, SimEvent{Kind: "dissolve", Major: true, X: r.SeatX, Y: r.SeatY,
 				Text: fmt.Sprintf("the league of %s dissolves", r.Name)})
 			return
 		}
@@ -789,6 +884,7 @@ func (s *Sim) removeSeat(i int) {
 	s.house = append(s.house[:i], s.house[i+1:]...)
 	s.houseSince = append(s.houseSince[:i], s.houseSince[i+1:]...)
 	s.reignEnd = append(s.reignEnd[:i], s.reignEnd[i+1:]...)
+	s.seatCrisisIdx = append(s.seatCrisisIdx[:i], s.seatCrisisIdx[i+1:]...)
 	if i < s.capitalIdx {
 		s.capitalIdx--
 	}
@@ -798,7 +894,7 @@ func (s *Sim) removeSeat(i int) {
 // above ruinPressure for ruinYears is sacked — struck from the living
 // world, its cell scarred to RegionRuin, its realm dissolved if it was
 // the last hall. Only dragonfire reaches the threshold.
-func (s *Sim) stepRuins(emit func(SimEvent)) bool {
+func (s *Sim) stepRuins(emit emitFn) bool {
 	var doomed []int
 	for i := range s.W.Seats {
 		if i == s.capitalIdx {
@@ -822,21 +918,29 @@ func (s *Sim) stepRuins(emit func(SimEvent)) bool {
 		return false
 	}
 	var realmsTouched []int64
+	dissolveCause := make(map[int64]int, len(doomed))
 	for _, i := range doomed {
 		st := s.W.Seats[i]
-		s.ruins = append(s.ruins, RuinSite{X: st.X, Y: st.Y, Name: st.Name, Year: s.Year})
-		s.setRegion(st.X, st.Y, RegionRuin)
+		detail := ""
 		if st.RealmID != 0 {
 			realmsTouched = append(realmsTouched, st.RealmID)
+			detail = fmt.Sprintf("%s is left with %d halls",
+				s.realmTitle(st.RealmID), s.realmHallCount(st.RealmID)-1)
 		}
-		emit(SimEvent{Kind: "ruin", Major: true, X: st.X, Y: st.Y,
-			Text: fmt.Sprintf("dragonfire takes %s — the hall of House %s lies in ruins", st.Name, s.house[i])})
+		idx := emit(s.unrestCause(i), SimEvent{Kind: "ruin", Major: true, X: st.X, Y: st.Y,
+			Text:   fmt.Sprintf("dragonfire takes %s — the hall of House %s lies in ruins", st.Name, s.house[i]),
+			Detail: detail})
+		s.ruins = append(s.ruins, RuinSite{X: st.X, Y: st.Y, Name: st.Name, Year: s.Year, EventIdx: idx})
+		s.setRegion(st.X, st.Y, RegionRuin)
+		if st.RealmID != 0 {
+			dissolveCause[st.RealmID] = idx
+		}
 	}
 	for j := len(doomed) - 1; j >= 0; j-- {
 		s.removeSeat(doomed[j])
 	}
 	for _, id := range realmsTouched {
-		s.maybeDissolve(id, emit)
+		s.maybeDissolve(id, emit, dissolveCause[id])
 	}
 	s.recomputeLairNoted()
 	return true
@@ -846,7 +950,7 @@ func (s *Sim) stepRuins(emit func(SimEvent)) bool {
 // inside its own territory — a ruin of the slice is resettled first
 // (the old name returns under a new house), otherwise the best fresh
 // site: river-adjacent founds a Tributary, open land an Outhold.
-func (s *Sim) stepFoundings(emit func(SimEvent)) bool {
+func (s *Sim) stepFoundings(emit emitFn) bool {
 	if len(s.W.Realms) == 0 {
 		return false
 	}
@@ -912,7 +1016,7 @@ func (s *Sim) clearOfSeats(x, y int64) bool {
 // foundSeat raises one hall for the realm, preferring its oldest
 // unsettled ruin, then the best fresh site in its territory (scored:
 // river-adjacent +2, cradle/agraria +1; ties to scan order).
-func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit func(SimEvent)) bool {
+func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit emitFn) bool {
 	nearRiver := func(x, y int64) bool {
 		if s.riverAt[[2]int64{x, y}] {
 			return true
@@ -931,7 +1035,7 @@ func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit func(SimEv
 			continue
 		}
 		s.ruins = append(s.ruins[:ri], s.ruins[ri+1:]...)
-		s.raiseHall(realmID, ruin.X, ruin.Y, ruin.Name, nearRiver(ruin.X, ruin.Y), true, emit)
+		s.raiseHall(realmID, ruin.X, ruin.Y, ruin.Name, nearRiver(ruin.X, ruin.Y), ruin.EventIdx, emit)
 		return true
 	}
 
@@ -966,13 +1070,14 @@ func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit func(SimEv
 	if bestScore < 0 {
 		return false
 	}
-	s.raiseHall(realmID, bx, by, generateName(nameSeedForCell(s.W.Seed, bx, by)), bestRiver, false, emit)
+	s.raiseHall(realmID, bx, by, generateName(nameSeedForCell(s.W.Seed, bx, by)), bestRiver, -1, emit)
 	return true
 }
 
 // raiseHall appends the new seat with all its parallel state and
-// flips its map cell to the seat tier.
-func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver, resettled bool, emit func(SimEvent)) {
+// flips its map cell to the seat tier. ruinIdx is the chronicle entry
+// of the sacking when this is a resettlement (-1 for a fresh site).
+func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver bool, ruinIdx int, emit emitFn) {
 	tier := RegionOuthold
 	if onRiver {
 		tier = RegionSeat
@@ -1001,16 +1106,20 @@ func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver, resettl
 	s.house = append(s.house, generateName(s.rng.Int63()))
 	s.houseSince = append(s.houseSince, s.Year)
 	s.reignEnd = append(s.reignEnd, s.Year+reignMinYears+s.rng.Intn(reignSpanYears))
+	s.seatCrisisIdx = append(s.seatCrisisIdx, -1)
 	s.recomputeLairNoted()
 
-	if resettled {
-		emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
+	detail := fmt.Sprintf("the realm now counts %d halls", s.realmHallCount(realmID))
+	if ruinIdx >= 0 {
+		emit(ruinIdx, SimEvent{Kind: "founding", Major: true, X: x, Y: y,
 			Text: fmt.Sprintf("%s is raised again from its ruins by the realm of %s, under House %s",
-				name, s.realmName(realmID), s.house[len(s.house)-1])})
+				name, s.realmName(realmID), s.house[len(s.house)-1]),
+			Detail: detail})
 		return
 	}
-	emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
-		Text: fmt.Sprintf("a new hall rises — %s, of the realm of %s", name, s.realmName(realmID))})
+	emit(-1, SimEvent{Kind: "founding", Major: true, X: x, Y: y,
+		Text:   fmt.Sprintf("a new hall rises — %s, of the realm of %s", name, s.realmName(realmID)),
+		Detail: detail})
 }
 
 // recomputeBorders rebuilds the realm-pair contact counts from the
@@ -1098,7 +1207,7 @@ func sortedPairs[V any](m map[[2]int64]V) [][2]int64 {
 
 // stepWars runs the year's grievances, declarations, campaigns,
 // captures, and peaces. Returns whether any seat changed hands.
-func (s *Sim) stepWars(emit func(SimEvent)) bool {
+func (s *Sim) stepWars(emit emitFn) bool {
 	if s.crownID == 0 {
 		return false // no crowned order to fight over
 	}
@@ -1149,10 +1258,16 @@ func (s *Sim) stepWars(emit func(SimEvent)) bool {
 		if s.realmStrength(b) > s.realmStrength(a) {
 			a, b = b, a
 		}
-		s.wars = append(s.wars, war{A: a, B: b, Start: s.Year})
+		cause := -1
+		if src, ok := s.grievanceSrc[k]; ok {
+			cause = src
+		}
 		ra, _ := s.realmSeatXY(a)
-		emit(SimEvent{Kind: "war", Major: true, X: ra[0], Y: ra[1],
-			Text: fmt.Sprintf("war — %s marches on %s", s.realmTitle(a), s.realmTitle(b))})
+		declIdx := emit(cause, SimEvent{Kind: "war", Major: true, X: ra[0], Y: ra[1],
+			Text: fmt.Sprintf("war — %s marches on %s", s.realmTitle(a), s.realmTitle(b)),
+			Detail: fmt.Sprintf("strength %.1f against %.1f",
+				s.realmStrength(a), s.realmStrength(b))})
+		s.wars = append(s.wars, war{A: a, B: b, Start: s.Year, declIdx: declIdx})
 	}
 
 	// Campaigns.
@@ -1163,8 +1278,9 @@ func (s *Sim) stepWars(emit func(SimEvent)) bool {
 		if nameA == "" || nameB == "" {
 			// One banner dissolved mid-war (sworn away, burned out, or
 			// captured whole) — the war ends with it.
-			emit(SimEvent{Kind: "peace", Major: true,
-				Text: "the war ends — one of its banners is no more"})
+			emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
+				Text:   "the war ends — one of its banners is no more",
+				Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
 			continue
 		}
 		strA, strB := s.realmStrength(w.A), s.realmStrength(w.B)
@@ -1181,8 +1297,9 @@ func (s *Sim) stepWars(emit func(SimEvent)) bool {
 					// A crown that cannot protect its halls loses them.
 					st.Allegiance = max(st.Allegiance-raidDoubt, 0)
 				}
-				emit(SimEvent{Kind: "raid", X: st.X, Y: st.Y,
-					Text: fmt.Sprintf("the war reaches %s — fields burn outside its walls", st.Name)})
+				emit(w.declIdx, SimEvent{Kind: "raid", X: st.X, Y: st.Y,
+					Text:   fmt.Sprintf("the war reaches %s — fields burn outside its walls", st.Name),
+					Detail: fmt.Sprintf("year %d of the war", age)})
 			}
 		}
 
@@ -1197,25 +1314,30 @@ func (s *Sim) stepWars(emit func(SimEvent)) bool {
 				st.RealmID = winner
 				s.lowStreak[ti], s.highStreak[ti] = 0, 0
 				s.grievance[pairKey(loser, winner)] += grievanceCapture
-				emit(SimEvent{Kind: "capture", Major: true, X: st.X, Y: st.Y,
+				idx := emit(w.declIdx, SimEvent{Kind: "capture", Major: true, X: st.X, Y: st.Y,
 					Text: fmt.Sprintf("%s falls to %s — House %s bends the knee",
-						st.Name, s.realmTitle(winner), s.house[ti])})
+						st.Name, s.realmTitle(winner), s.house[ti]),
+					Detail: fmt.Sprintf("year %d of the war; %s now counts %d halls",
+						s.Year-w.Start, s.realmTitle(winner), s.realmHallCount(winner))})
+				s.grievanceSrc[pairKey(loser, winner)] = idx
 				changed = true
-				s.maybeDissolve(old, emit)
+				s.maybeDissolve(old, emit, idx)
 			}
 			w.Score = 0
 			if s.rng.Float64() < warEndAfterCapture || s.realmName(loser) == "" {
 				s.grievance[pairKey(w.A, w.B)] *= 0.5
-				emit(SimEvent{Kind: "peace", Major: true,
-					Text: fmt.Sprintf("peace between %s and %s — the borders rest", nameA, nameB)})
+				emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
+					Text:   fmt.Sprintf("peace between %s and %s — the borders rest", nameA, nameB),
+					Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
 				continue
 			}
 		}
 
 		if s.Year-w.Start >= maxWarYears {
 			s.grievance[pairKey(w.A, w.B)] *= 0.5
-			emit(SimEvent{Kind: "peace", Major: true,
-				Text: fmt.Sprintf("peace between %s and %s — both sides are spent", nameA, nameB)})
+			emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
+				Text:   fmt.Sprintf("peace between %s and %s — both sides are spent", nameA, nameB),
+				Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
 			continue
 		}
 		kept = append(kept, w)

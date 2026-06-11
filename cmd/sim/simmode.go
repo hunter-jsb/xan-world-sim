@@ -103,6 +103,9 @@ func (m *model) exitSim() {
 	m.sim = nil
 	m.simGen++ // invalidate in-flight year ticks
 	m.simPaused = false
+	m.simPings = nil
+	m.simNote, m.simNoteUntil = "", 0
+	m.lastEventIdx = 0
 	m.politicalMode = m.preSimPolitical
 	m.data.seats = m.preSimSeats
 	m.data.territory = m.preSimTerritory
@@ -136,33 +139,64 @@ func (m *model) simTickCmd() tea.Cmd {
 	return tea.Tick(simSpeeds[m.simSpeed], func(time.Time) tea.Msg { return simTickMsg{gen: gen} })
 }
 
+// simPing is one alarm mark on the map: an event happened at (x, y)
+// and the cell stays tinted until the given year.
+type simPing struct {
+	x, y  int64
+	until int
+}
+
+const (
+	pingYears = 10 // how long an event tints its cell
+	newsYears = 8  // how long a headline holds the status line
+)
+
 // handleSimTick advances one year unless something holds the clock —
 // an open popup (read in peace), an expedition afield (the court holds
 // its breath, the day clock runs instead), or an explicit pause. The
 // tick chain itself always continues while the mode is active.
+//
+// Events never pause the simulation: headlines take the status line
+// for a few years and ping the map where they happened; the chronicle
+// (L) keeps the full record, g jumps to the latest news.
 func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 	if !m.simMode || msg.gen != m.simGen {
 		return nil // stale tick from a left simulation
 	}
 	if m.popup == nil && m.exp == nil && !m.simPaused && m.sim != nil {
 		events := m.sim.StepYear()
-		var majors []world.SimEvent
+		var lastMajor *world.SimEvent
 		minor := ""
-		for _, e := range events {
+		for i := range events {
+			e := &events[i]
+			if e.Major || e.Kind == "raid" {
+				m.simPings = append(m.simPings, simPing{x: e.X, y: e.Y, until: m.sim.Year + pingYears})
+			}
 			if e.Major {
-				majors = append(majors, e)
+				lastMajor = e
 			} else {
 				minor = e.Text
 			}
 		}
-		m.applySimData(false)
-		if minor != "" {
-			m.status = fmt.Sprintf("year %d — %s", m.sim.Year, minor)
-		} else {
-			m.status = fmt.Sprintf("year %d", m.sim.Year)
+		live := m.simPings[:0]
+		for _, p := range m.simPings {
+			if m.sim.Year < p.until {
+				live = append(live, p)
+			}
 		}
-		if len(majors) > 0 {
-			m.openMajorEventPopup(majors)
+		m.simPings = live
+		m.applySimData(false)
+		if lastMajor != nil {
+			m.simNote = lastMajor.Text
+			m.simNoteUntil = m.sim.Year + newsYears
+		}
+		switch {
+		case m.simNote != "" && m.sim.Year < m.simNoteUntil:
+			m.status = fmt.Sprintf("year %d ⚑ %s", m.sim.Year, m.simNote)
+		case minor != "":
+			m.status = fmt.Sprintf("year %d — %s", m.sim.Year, minor)
+		default:
+			m.status = fmt.Sprintf("year %d", m.sim.Year)
 		}
 		m.mapStr = m.buildMap()
 	}
@@ -273,28 +307,10 @@ func (m *model) openSimExitPopup() {
 	m.mapStr = m.buildMap()
 }
 
-// openMajorEventPopup interrupts for the year's major events — realm
-// membership shifts and the epoch mark. The clock holds while it's up.
-func (m *model) openMajorEventPopup(majors []world.SimEvent) {
-	e := majors[0]
-	body := make([]string, len(majors))
-	for i, ev := range majors {
-		body[i] = statusStyle.Render(ev.Text)
-	}
-	m.popup = &popupState{
-		title: fmt.Sprintf("year %d — word reaches the halls", e.Year),
-		body:  body,
-		opts: []popupOption{
-			{label: "Jump there", action: popJumpXY},
-			{label: "Continue", action: popClose},
-		},
-		cellX: e.X, cellY: e.Y,
-	}
-}
-
 // openChroniclePopup lists the slice's whole history, latest first;
-// choosing an entry jumps the cursor to where it happened.
-func (m *model) openChroniclePopup() {
+// choosing an entry opens its page (impact, causes, jump). selIdx
+// positions the selection on a chronicle index (-1 = the latest).
+func (m *model) openChroniclePopup(selIdx int) {
 	if !m.simMode || m.sim == nil {
 		m.status = "the chronicle is written inside a simulation (S enters one)"
 		return
@@ -307,16 +323,74 @@ func (m *model) openChroniclePopup() {
 	opts := make([]popupOption, 0, len(log))
 	for i := len(log) - 1; i >= 0; i-- {
 		e := log[i]
+		marker := "  "
+		if e.Major {
+			marker = "⚑ "
+		}
 		opts = append(opts, popupOption{
-			label:  fmt.Sprintf("y%4d  %s", e.Year, e.Text),
-			action: popJumpEvent,
+			label:  fmt.Sprintf("y%4d %s%s", e.Year, marker, e.Text),
+			action: popEventDetail,
 			arg:    i,
 		})
+	}
+	sel := 0
+	if selIdx >= 0 && selIdx < len(log) {
+		sel = len(log) - 1 - selIdx
 	}
 	m.popup = &popupState{
 		title: fmt.Sprintf("chronicle — year %d, %d entries", m.sim.Year, len(log)),
 		opts:  opts,
-		sel:   0,
+		sel:   sel,
 	}
 	m.mapStr = m.buildMap()
+}
+
+// openEventDetailPopup is one event's page: what happened, what it
+// changed, and the thread of causes behind it — each cause one more
+// page, so the chronicle browses as a web.
+func (m *model) openEventDetailPopup(idx int) {
+	if m.sim == nil || idx < 0 || idx >= len(m.sim.Log) {
+		return
+	}
+	m.lastEventIdx = idx
+	e := m.sim.Log[idx]
+	body := []string{statusStyle.Render(e.Text)}
+	if e.Detail != "" {
+		body = append(body, dimStyle.Render(e.Detail))
+	}
+	opts := []popupOption{{label: "Jump there", action: popJumpXY}}
+	if e.Cause >= 0 && e.Cause < len(m.sim.Log) {
+		c := m.sim.Log[e.Cause]
+		body = append(body, "", dimStyle.Render(fmt.Sprintf("grown from y%d — %s", c.Year, c.Text)))
+		opts = append(opts, popupOption{
+			label:  fmt.Sprintf("Follow the thread back (y%d)", c.Year),
+			action: popEventDetail,
+			arg:    e.Cause,
+		})
+	}
+	opts = append(opts, popupOption{label: "Back to chronicle", action: popChronicle})
+	m.popup = &popupState{
+		title: fmt.Sprintf("year %d — %s", e.Year, e.Kind),
+		body:  body,
+		opts:  opts,
+		cellX: e.X, cellY: e.Y,
+	}
+	m.mapStr = m.buildMap()
+}
+
+// jumpLatestNews moves the cursor to the most recent headline.
+func (m *model) jumpLatestNews() {
+	if !m.simMode || m.sim == nil {
+		m.status = "no simulation running (S enters one)"
+		return
+	}
+	for i := len(m.sim.Log) - 1; i >= 0; i-- {
+		if e := m.sim.Log[i]; e.Major {
+			m.curX, m.curY = e.X, e.Y
+			m.status = fmt.Sprintf("y%d ⚑ %s", e.Year, e.Text)
+			m.mapStr = m.buildMap()
+			return
+		}
+	}
+	m.status = "no news yet in this slice"
 }

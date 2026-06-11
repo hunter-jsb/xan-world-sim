@@ -75,6 +75,14 @@ type model struct {
 	// helpSel is the last help topic read — the menu reopens there.
 	helpSel int
 
+	// Streaming sim news: map pings at recent event sites, the sticky
+	// headline on the status line, and the last chronicle page read
+	// (the chronicle reopens there).
+	simPings     []simPing
+	simNote      string
+	simNoteUntil int
+	lastEventIdx int
+
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
@@ -172,18 +180,19 @@ const dayTick = 150 * time.Millisecond
 type popupAction string
 
 const (
-	popClose     popupAction = "close"
-	popSendExp   popupAction = "send-expedition" // from a cell dossier
-	popDepart    popupAction = "depart"          // confirm a proposed expedition
-	popCancelExp popupAction = "cancel-expedition"
-	popConclude  popupAction = "conclude-expedition"
-	popJumpPOI   popupAction = "jump-poi"   // arg = index into m.pois
-	popExitSim   popupAction = "exit-sim"   // leave simulation mode
-	popJumpXY    popupAction = "jump-xy"    // jump cursor to the popup's cell
-	popJumpEvent popupAction = "jump-event" // arg = index into m.sim.Log
-	popExpChoice popupAction = "exp-choice" // arg = index into the pending hazard's choices
-	popHelpTopic popupAction = "help-topic" // arg = index into helpTopics
-	popHelpMenu  popupAction = "help-menu"  // back to the topic list
+	popClose       popupAction = "close"
+	popSendExp     popupAction = "send-expedition" // from a cell dossier
+	popDepart      popupAction = "depart"          // confirm a proposed expedition
+	popCancelExp   popupAction = "cancel-expedition"
+	popConclude    popupAction = "conclude-expedition"
+	popJumpPOI     popupAction = "jump-poi"     // arg = index into m.pois
+	popExitSim     popupAction = "exit-sim"     // leave simulation mode
+	popJumpXY      popupAction = "jump-xy"      // jump cursor to the popup's cell
+	popEventDetail popupAction = "event-detail" // arg = index into m.sim.Log — opens the event's page
+	popChronicle   popupAction = "chronicle"    // back to the chronicle list
+	popExpChoice   popupAction = "exp-choice"   // arg = index into the pending hazard's choices
+	popHelpTopic   popupAction = "help-topic"   // arg = index into helpTopics
+	popHelpMenu    popupAction = "help-menu"    // back to the topic list
 )
 
 type popupOption struct {
@@ -327,7 +336,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "L":
-			m.openChroniclePopup()
+			m.openChroniclePopup(-1)
+		case "g":
+			m.jumpLatestNews()
 		case "enter":
 			m.openCellPopup()
 		case "r":
@@ -747,7 +758,7 @@ func (m model) View() string {
 			if m.simPaused {
 				pause = "space resume"
 			}
-			hints = append(hints, pause, "] [ speed", "L chronicle", "S leave")
+			hints = append(hints, pause, "] [ speed", "L chronicle", "g news", "S leave")
 		default:
 			hints = append(hints, "enter inspect")
 		}
@@ -923,12 +934,10 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 	case popJumpXY:
 		m.curX, m.curY = pop.cellX, pop.cellY
 
-	case popJumpEvent:
-		if m.sim != nil && opt.arg >= 0 && opt.arg < len(m.sim.Log) {
-			e := m.sim.Log[opt.arg]
-			m.curX, m.curY = e.X, e.Y
-			m.status = fmt.Sprintf("year %d — %s", e.Year, e.Text)
-		}
+	case popEventDetail:
+		m.openEventDetailPopup(opt.arg)
+	case popChronicle:
+		m.openChroniclePopup(m.lastEventIdx)
 
 	case popSendExp:
 		m.mapStr = m.buildMap()
@@ -1175,24 +1184,27 @@ func (m *model) expTickCmd() tea.Cmd {
 	return tea.Tick(dayTick, func(time.Time) tea.Msg { return expTickMsg{gen: gen} })
 }
 
-// overlayPath renders the expedition route for the current phase:
-// walked trail dimmed, caravan at pos, road ahead bright, X at the
-// destination.
+// overlayPath renders the expedition route for the current phase
+// (walked trail dimmed, caravan at pos, road ahead bright, X at the
+// destination) plus the simulation's event pings — alarm-tinted
+// cells where news recently broke (zero glyph = recolor only).
 func (m *model) overlayPath() []render.PathCell {
-	if m.exp == nil {
-		return nil
-	}
-	e := m.exp
-	out := make([]render.PathCell, len(e.path))
-	copy(out, e.path)
-	for i := range out {
-		if i < e.pos {
-			out[i].Dim = true
+	var out []render.PathCell
+	if e := m.exp; e != nil {
+		out = make([]render.PathCell, len(e.path), len(e.path)+len(m.simPings))
+		copy(out, e.path)
+		for i := range out {
+			if i < e.pos {
+				out[i].Dim = true
+			}
+		}
+		if e.phase != expPending {
+			out[e.pos].G = '@'
+			out[e.pos].Dim = false
 		}
 	}
-	if e.phase != expPending {
-		out[e.pos].G = '@'
-		out[e.pos].Dim = false
+	for _, p := range m.simPings {
+		out = append(out, render.PathCell{X: p.x, Y: p.y, Hot: true})
 	}
 	return out
 }
