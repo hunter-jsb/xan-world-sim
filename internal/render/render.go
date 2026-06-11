@@ -201,16 +201,19 @@ func elevTier(elev, base, amp float64) int {
 }
 
 const (
-	riverColor = "51"
-	roadColor  = "180"
-	pathColor  = "220" // amber gold — expedition trail
+	riverColor   = "51"
+	roadColor    = "180"
+	pathColor    = "220" // amber gold — the road ahead
+	pathDimColor = "94"  // walked trail — dark gold, already behind the caravan
 )
 
 // PathCell is one step on an expedition route, with the directional glyph
-// indicating which way the traveller moves to the next cell.
+// indicating which way the traveller moves to the next cell. Dim marks
+// trail the caravan has already walked.
 type PathCell struct {
 	X, Y int64
-	G    rune // from DirectionalGlyph; '@' for the start marker
+	G    rune // from DirectionalGlyph; '@' for the caravan, 'X' destination
+	Dim  bool
 }
 
 var (
@@ -468,13 +471,14 @@ func (gb *GridBuf) Render(curX, curY int64, path []PathCell) string {
 	type entry struct {
 		col int
 		g   rune
+		dim bool
 	}
 	pathOverlay := make(map[int][]entry, len(path))
 	for _, p := range path {
 		row := int(p.Y - gb.minY)
 		col := int(p.X - gb.minX)
 		if row >= 0 && row < height {
-			pathOverlay[row] = append(pathOverlay[row], entry{col, p.G})
+			pathOverlay[row] = append(pathOverlay[row], entry{col, p.G, p.Dim})
 		}
 	}
 
@@ -495,14 +499,18 @@ func (gb *GridBuf) Render(curX, curY int64, path []PathCell) string {
 		if isCurRow {
 			curColInRow = int(curX - gb.minX)
 		}
-		colGlyph := make(map[int]rune, len(overlay))
+		colEntry := make(map[int]entry, len(overlay))
 		for _, e := range overlay {
-			colGlyph[e.col] = e.g
+			colEntry[e.col] = e
 		}
 		for j, c := range gb.raw[i] {
 			isCursor := j == curColInRow
-			if g, isPath := colGlyph[j]; isPath {
-				appendCell(&b, pathColor, true, isCursor, g)
+			if e, isPath := colEntry[j]; isPath {
+				color := pathColor
+				if e.dim {
+					color = pathDimColor
+				}
+				appendCell(&b, color, !e.dim, isCursor, e.g)
 			} else {
 				appendCell(&b, c.color, c.bold, isCursor, c.g)
 			}

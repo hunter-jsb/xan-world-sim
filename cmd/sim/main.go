@@ -76,15 +76,50 @@ type model struct {
 	// Cursor position on the map.
 	curX, curY int64
 
-	// Expedition pathfinding: expStart is the journey origin (nil = inactive).
-	// expPath is the live Dijkstra route from start to cursor, recomputed on
-	// every cursor move. dangerMap is pre-built per regen from lair features.
-	expStart  *[2]int64
-	expPath   []render.PathCell
+	// exp is the active expedition (nil = none). expGen invalidates
+	// in-flight tick Cmds after an abandon — a stale tick carrying an
+	// old generation is discarded. dangerMap is pre-built per regen
+	// from lair features and feeds route costs.
+	exp       *expedition
+	expGen    int
 	dangerMap map[[2]int64]int
 
 	minX, minY, maxX, maxY int64
 }
+
+// expPhase is the expedition lifecycle: proposed and waiting for the
+// player's confirmation, marching on the day clock, or arrived.
+type expPhase int
+
+const (
+	expPending expPhase = iota
+	expRunning
+	expArrived
+)
+
+// expedition is a caravan en route from the settlement nearest the
+// chosen destination. Travel runs on a granular day clock inside one
+// frozen moment of deep time: entering a cell costs its travel cost
+// in *days* (river 1, open land 4, marsh 8, ...), so arrive[i] is the
+// day the caravan reaches path[i].
+type expedition struct {
+	phase    expPhase
+	fromName string
+	destX    int64
+	destY    int64
+	path     []render.PathCell
+	arrive   []int
+	pos      int // index into path of the caravan's current cell
+	day      int
+}
+
+func (e *expedition) totalDays() int { return e.arrive[len(e.arrive)-1] }
+
+// expTickMsg advances the day clock; gen guards against stale ticks.
+type expTickMsg struct{ gen int }
+
+// dayTick is the wall-clock pace of one expedition day.
+const dayTick = 150 * time.Millisecond
 
 // worldData bundles the viewport query results the TUI renders from.
 type worldData struct {
@@ -149,14 +184,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			if m.exp != nil {
+				m.abandonExpedition()
+				return m, nil
+			}
 			return m, tea.Quit
 		case "r":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			newSeed := time.Now().UnixNano()
 			m.seed = newSeed
 			m.status = "rerolling..."
 			return m, m.regen(newSeed, m.kya)
 		case "e":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			next := world.KyaNow
 			if m.kya == world.KyaNow {
 				next = world.KyaOldWorld
@@ -169,6 +216,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `]` / right = forward in time (toward present, kya decreases).
 		// `[` / left  = backward in time (toward LGM, kya increases).
 		case "]", "right":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			next := clampKya(m.kya - stepSmall)
 			if next == m.kya {
 				m.status = "at 0kya (present)"
@@ -178,6 +228,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "[", "left":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			next := clampKya(m.kya + stepSmall)
 			if next == m.kya {
 				m.status = fmt.Sprintf("at %dkya (past cap)", world.KyaMax)
@@ -187,6 +240,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("← %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			next := clampKya(m.kya - stepBig)
 			if next == m.kya {
 				m.status = "at 0kya (present)"
@@ -196,6 +252,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("→→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
 			next := clampKya(m.kya + stepBig)
 			if next == m.kya {
 				m.status = fmt.Sprintf("at %dkya (past cap)", world.KyaMax)
@@ -216,47 +275,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildGrid()
 			m.mapStr = m.buildMap()
 
-		// Expedition: s sets/clears the journey start at the cursor.
-		// While active, every cursor move recomputes the Dijkstra path.
+		// Expedition: s proposes a journey from the nearest settlement
+		// to the cursor; y departs; s/esc abandons one in progress.
 		case "s":
-			if m.expStart == nil {
-				pos := [2]int64{m.curX, m.curY}
-				m.expStart = &pos
-				m.expPath = []render.PathCell{{X: m.curX, Y: m.curY, G: '@'}}
-				m.status = fmt.Sprintf("expedition start set at (%d,%d)", m.curX, m.curY)
+			if m.exp == nil {
+				m.planExpedition()
 			} else {
-				m.expStart = nil
-				m.expPath = nil
-				m.status = "expedition cleared"
+				m.abandonExpedition()
 			}
-			m.mapStr = m.buildMap()
+		case "y":
+			if m.exp != nil && m.exp.phase == expPending {
+				m.exp.phase = expRunning
+				m.status = fmt.Sprintf("the %s expedition departs — %d days ahead",
+					m.exp.fromName, m.exp.totalDays())
+				m.mapStr = m.buildMap()
+				return m, m.expTickCmd()
+			}
 
 		// Cursor navigation — hjkl, instant (no regen needed).
 		case "h":
 			if m.curX > m.minX {
 				m.curX--
-				m.recomputeExpPath()
 				m.mapStr = m.buildMap()
 			}
 		case "l":
 			if m.curX < m.maxX {
 				m.curX++
-				m.recomputeExpPath()
 				m.mapStr = m.buildMap()
 			}
 		case "k":
 			if m.curY > m.minY {
 				m.curY--
-				m.recomputeExpPath()
 				m.mapStr = m.buildMap()
 			}
 		case "j":
 			if m.curY < m.maxY {
 				m.curY++
-				m.recomputeExpPath()
 				m.mapStr = m.buildMap()
 			}
 		}
+
+	case expTickMsg:
+		if m.exp == nil || m.exp.phase != expRunning || msg.gen != m.expGen {
+			return m, nil // stale tick from an abandoned expedition
+		}
+		e := m.exp
+		e.day++
+		for e.pos < len(e.path)-1 && e.arrive[e.pos+1] <= e.day {
+			e.pos++
+		}
+		if e.pos == len(e.path)-1 {
+			e.phase = expArrived
+			m.status = fmt.Sprintf("the %s expedition arrived at (%d,%d) after %d days",
+				e.fromName, e.destX, e.destY, e.totalDays())
+			m.mapStr = m.buildMap()
+			return m, nil
+		}
+		m.status = fmt.Sprintf("day %d/%d — %s expedition afield",
+			e.day, e.totalDays(), e.fromName)
+		m.mapStr = m.buildMap()
+		return m, m.expTickCmd()
 
 	case regenMsg:
 		if msg.err != nil {
@@ -271,9 +349,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data = msg.data
 		m.buildLookups()
 		m.rebuildGrid()
-		// World changed — terrain costs shift, so stale paths are misleading.
-		m.expStart = nil
-		m.expPath = nil
+		// World changed — terrain costs shift, so a stale expedition
+		// would be walking a world that no longer exists.
+		m.exp = nil
+		m.expGen++
 		m.mapStr = m.buildMap()
 		m.era = msg.era
 		m.status = ""
@@ -322,7 +401,7 @@ func (m *model) buildMap() string {
 	if m.gridBuf == nil {
 		return ""
 	}
-	return m.gridBuf.Render(m.curX, m.curY, m.expPath)
+	return m.gridBuf.Render(m.curX, m.curY, m.overlayPath())
 }
 
 // cellInfoAt assembles a CellInfo for the cursor position.
@@ -422,9 +501,16 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.legend)
 	b.WriteString("\n\n")
-	expHint := "s expedition"
-	if m.expStart != nil {
-		expHint = fmt.Sprintf("s clear expedition (%d steps)", max(0, len(m.expPath)-1))
+	expHint := "s expedition to cursor"
+	if m.exp != nil {
+		switch m.exp.phase {
+		case expPending:
+			expHint = "y depart   s cancel"
+		case expRunning:
+			expHint = fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays())
+		case expArrived:
+			expHint = "s conclude expedition"
+		}
 	}
 	b.WriteString(dimStyle.Render("hjkl cursor   " + expHint + "   p politics   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
 	if m.status != "" {
@@ -525,26 +611,144 @@ type expHeapItem struct {
 	cost int
 }
 
-// recomputeExpPath re-runs Dijkstra from expStart to the current cursor.
-// No-ops when no expedition is active.
-func (m *model) recomputeExpPath() {
-	if m.expStart == nil {
-		return
+// deepTimeLocked reports whether kya scrubbing and rerolls are blocked
+// — true whenever an expedition exists. A caravan lives inside one
+// frozen moment of deep time; scrubbing would dissolve the world under
+// its feet. Sets the status line as a side effect.
+func (m *model) deepTimeLocked() bool {
+	if m.exp == nil {
+		return false
 	}
-	sx, sy := m.expStart[0], m.expStart[1]
-	if sx == m.curX && sy == m.curY {
-		m.expPath = []render.PathCell{{X: sx, Y: sy, G: '@'}}
-		return
-	}
-	path := m.computePath(sx, sy, m.curX, m.curY)
-	if path == nil {
-		// No route found — keep start marker only.
-		m.expPath = []render.PathCell{{X: sx, Y: sy, G: '@'}}
-		m.status = "no route"
+	m.status = "deep time is locked while an expedition is afield (s abandons)"
+	return true
+}
+
+func (m *model) abandonExpedition() {
+	if m.exp != nil && m.exp.phase == expArrived {
+		m.status = "expedition concluded"
 	} else {
-		m.expPath = path
-		m.status = fmt.Sprintf("expedition: %d steps", len(path)-1)
+		m.status = "expedition abandoned"
 	}
+	m.exp = nil
+	m.expGen++ // invalidate in-flight ticks
+	m.mapStr = m.buildMap()
+}
+
+// planExpedition proposes a journey: the settlement nearest the cursor
+// (by travel cost, dragon danger included — the world's own metric of
+// "near") will send a caravan to the cursor cell. The player confirms
+// with y before anyone marches.
+func (m *model) planExpedition() {
+	if m.pathCellCost(m.curX, m.curY) < 0 {
+		m.status = "no expedition can reach this terrain"
+		return
+	}
+	seat, ok := m.nearestSeat(m.curX, m.curY)
+	if !ok {
+		m.status = "no settlement can reach this place"
+		return
+	}
+	path := m.computePath(seat.X, seat.Y, m.curX, m.curY)
+	if len(path) < 2 {
+		m.status = "the destination is at the hall's own doorstep"
+		return
+	}
+	// The origin renders as part of the trail, not as a second
+	// caravan marker — the caravan glyph is drawn at pos.
+	path[0].G = render.DirectionalGlyph(int(path[1].X-path[0].X), int(path[1].Y-path[0].Y))
+	arrive := make([]int, len(path))
+	for i := 1; i < len(path); i++ {
+		arrive[i] = arrive[i-1] + m.pathCellCost(path[i].X, path[i].Y)
+	}
+	m.exp = &expedition{
+		phase:    expPending,
+		fromName: seat.Name,
+		destX:    m.curX,
+		destY:    m.curY,
+		path:     path,
+		arrive:   arrive,
+	}
+	m.status = fmt.Sprintf("expedition: %s (%d,%d) → (%d,%d), %d days — y to depart, s to cancel",
+		seat.Name, seat.X, seat.Y, m.curX, m.curY, arrive[len(arrive)-1])
+	m.mapStr = m.buildMap()
+}
+
+// nearestSeat finds the settlement with the cheapest route to (x, y)
+// via Dijkstra outward from the destination over entry costs. Ties
+// keep the first seat in query order (stable for a given world).
+func (m *model) nearestSeat(x, y int64) (db.GetSeatsInBoundsRow, bool) {
+	type coord = [2]int64
+	dist := make(map[coord]int, 512)
+	dist[coord{x, y}] = 0
+	h := pqueue.New(func(a, b expHeapItem) bool { return a.cost < b.cost })
+	h.Push(expHeapItem{x, y, 0})
+	dirs := [8][2]int64{{-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}}
+	for h.Len() > 0 {
+		cur := h.Pop()
+		cc := coord{cur.x, cur.y}
+		if cur.cost > dist[cc] {
+			continue
+		}
+		for _, d := range dirs {
+			nx, ny := cur.x+d[0], cur.y+d[1]
+			if nx < m.minX || nx > m.maxX || ny < m.minY || ny > m.maxY {
+				continue
+			}
+			c := m.pathCellCost(nx, ny)
+			if c < 0 {
+				continue
+			}
+			nc := coord{nx, ny}
+			nd := dist[cc] + c
+			if old, seen := dist[nc]; !seen || nd < old {
+				dist[nc] = nd
+				h.Push(expHeapItem{nx, ny, nd})
+			}
+		}
+	}
+	best := -1
+	bestD := 0
+	for i, s := range m.data.seats {
+		d, ok := dist[coord{s.X, s.Y}]
+		if !ok {
+			continue
+		}
+		if best < 0 || d < bestD {
+			best, bestD = i, d
+		}
+	}
+	if best < 0 {
+		return db.GetSeatsInBoundsRow{}, false
+	}
+	return m.data.seats[best], true
+}
+
+// expTickCmd schedules the next expedition day.
+func (m *model) expTickCmd() tea.Cmd {
+	gen := m.expGen
+	return tea.Tick(dayTick, func(time.Time) tea.Msg { return expTickMsg{gen: gen} })
+}
+
+// overlayPath renders the expedition route for the current phase:
+// walked trail dimmed, caravan at pos, road ahead bright, X at the
+// destination.
+func (m *model) overlayPath() []render.PathCell {
+	if m.exp == nil {
+		return nil
+	}
+	e := m.exp
+	out := make([]render.PathCell, len(e.path))
+	copy(out, e.path)
+	for i := range out {
+		if i < e.pos {
+			out[i].Dim = true
+		}
+	}
+	if e.phase != expPending {
+		out[e.pos].G = '@'
+		out[e.pos].Dim = false
+	}
+	return out
 }
 
 // buildDangerMap pre-computes per-cell dragon danger scores from all lair
