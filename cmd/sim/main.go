@@ -142,9 +142,21 @@ type expedition struct {
 	arrive   []int
 	pos      int // index into path of the caravan's current cell
 	day      int
+
+	// En-route hazards (expevents.go): precomputed at departure,
+	// fired in order on the day clock. delay is the days the road's
+	// events have cost (or won); pending is the hazard awaiting the
+	// player's choice; note keeps the last outcome on the status line
+	// until day noteUntil so a tick doesn't immediately overwrite it.
+	events    []expEvent
+	nextEvent int
+	delay     int
+	pending   *expEvent
+	note      string
+	noteUntil int
 }
 
-func (e *expedition) totalDays() int { return e.arrive[len(e.arrive)-1] }
+func (e *expedition) totalDays() int { return e.arrive[len(e.arrive)-1] + e.delay }
 
 // expTickMsg advances the day clock; gen guards against stale ticks.
 type expTickMsg struct{ gen int }
@@ -166,6 +178,7 @@ const (
 	popExitSim   popupAction = "exit-sim"   // leave simulation mode
 	popJumpXY    popupAction = "jump-xy"    // jump cursor to the popup's cell
 	popJumpEvent popupAction = "jump-event" // arg = index into m.sim.Log
+	popExpChoice popupAction = "exp-choice" // arg = index into the pending hazard's choices
 )
 
 type popupOption struct {
@@ -464,9 +477,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.exp == nil || m.exp.phase != expRunning || msg.gen != m.expGen {
 			return m, nil // stale tick from an abandoned expedition
 		}
+		if m.popup != nil {
+			// The day holds under any modal — a hazard choice, a cell
+			// dossier, the chronicle — and resumes when it closes.
+			return m, m.expTickCmd()
+		}
 		e := m.exp
 		e.day++
-		for e.pos < len(e.path)-1 && e.arrive[e.pos+1] <= e.day {
+		// The road's next hazard fires the day the caravan reaches it.
+		if e.nextEvent < len(e.events) && e.day >= e.events[e.nextEvent].day+e.delay {
+			ev := &e.events[e.nextEvent]
+			e.nextEvent++
+			e.pending = ev
+			m.openExpEventPopup(ev)
+			m.mapStr = m.buildMap()
+			return m, m.expTickCmd()
+		}
+		for e.pos < len(e.path)-1 && e.arrive[e.pos+1]+e.delay <= e.day {
 			e.pos++
 		}
 		if e.pos == len(e.path)-1 {
@@ -485,8 +512,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mapStr = m.buildMap()
 			return m, nil
 		}
-		m.status = fmt.Sprintf("day %d/%d — %s expedition afield",
-			e.day, e.totalDays(), e.fromName)
+		if e.note != "" && e.day < e.noteUntil {
+			m.status = fmt.Sprintf("day %d/%d — %s", e.day, e.totalDays(), e.note)
+		} else {
+			m.status = fmt.Sprintf("day %d/%d — %s expedition afield",
+				e.day, e.totalDays(), e.fromName)
+		}
 		m.mapStr = m.buildMap()
 		return m, m.expTickCmd()
 
@@ -910,6 +941,9 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 		m.exp = nil
 		m.expGen++
 		m.status = "expedition concluded"
+
+	case popExpChoice:
+		m.resolveExpChoice(opt.arg)
 	}
 	m.mapStr = m.buildMap()
 	return m, nil
@@ -1052,6 +1086,7 @@ func (m *model) planExpedition(destX, destY int64) {
 	for i := 1; i < len(path); i++ {
 		arrive[i] = arrive[i-1] + m.pathCellCost(path[i].X, path[i].Y)
 	}
+	events := m.buildExpEvents(seat.RealmID, path, arrive)
 	m.exp = &expedition{
 		phase:    expPending,
 		fromName: seat.Name,
@@ -1059,15 +1094,22 @@ func (m *model) planExpedition(destX, destY int64) {
 		destY:    destY,
 		path:     path,
 		arrive:   arrive,
+		events:   events,
 	}
+	body := []string{
+		dimStyle.Render(fmt.Sprintf("%s (%d,%d) offers a caravan to (%d,%d).",
+			seat.Name, seat.X, seat.Y, destX, destY)),
+		dimStyle.Render(fmt.Sprintf("the road: %d cells, %d days", len(path)-1, arrive[len(arrive)-1])),
+	}
+	if n := len(events); n == 1 {
+		body = append(body, dimStyle.Render("the scouts mark one hazard on this road"))
+	} else if n > 1 {
+		body = append(body, dimStyle.Render(fmt.Sprintf("the scouts mark %d hazards on this road", n)))
+	}
+	body = append(body, dimStyle.Render("deep time stays locked until it returns or is abandoned"))
 	m.popup = &popupState{
 		title: "expedition",
-		body: []string{
-			dimStyle.Render(fmt.Sprintf("%s (%d,%d) offers a caravan to (%d,%d).",
-				seat.Name, seat.X, seat.Y, destX, destY)),
-			dimStyle.Render(fmt.Sprintf("the road: %d cells, %d days", len(path)-1, arrive[len(arrive)-1])),
-			dimStyle.Render("deep time stays locked until it returns or is abandoned"),
-		},
+		body:  body,
 		opts:  []popupOption{{label: "Depart", action: popDepart}, {label: "Cancel", action: popCancelExp}},
 		cellX: destX, cellY: destY,
 	}
