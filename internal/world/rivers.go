@@ -109,22 +109,19 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 	//                lake reaches before it overflows. The raised
 	//                amount (filled − bedrock) IS the water depth at
 	//                that cell. depth > 0 means the cell is submerged.
-	//   scale — a basin *qualifies* as a lake only if its deepest
-	//           point exceeds half its zone's noise amplitude
-	//           (zoneAmplitude/2: cradle 25m, foothill 50m). The
-	//           bedrock field is zone base ± amplitude of noise, so
-	//           shallow depressions are expected texture of the noise
-	//           itself; a coherent pit deeper than half the amplitude
-	//           is a real concavity. Once a basin qualifies, its
-	//           *extent* is every submerged cell — shallow margins
-	//           included — because the water surface is the spill
-	//           level regardless of where the deep point sits.
-	//           submergedMin = 1m excludes pit-fill's epsilon grading
-	//           (accumulates to ~0.1m on long flat paths) and
-	//           sub-resolution film. Cluster filter: real lakes span
-	//           multiple cells; 3 cells (~150km²) is the smallest
-	//           cluster that represents a real geographic feature,
-	//           grounded in grid resolution.
+	//   scale — open water is detected with depth hysteresis against
+	//           the zone's noise amplitude. A lake needs an *anchor*
+	//           deeper than amp/2 (cradle 25m, foothill 50m — a pit
+	//           the ± amp noise can't produce as texture), and its
+	//           *body* is the anchor's connected shelf deeper than
+	//           amp/4 — attached to a deep reservoir, so it stays
+	//           wet. Submergence shallower than amp/4 is the basin's
+	//           seasonal fringe and reads as land (rendering it
+	//           flooded the whole lowland with lake-webs). The basin
+	//           and its spill surface are still established from the
+	//           full submerged web (≥1m, which excludes pit-fill's
+	//           epsilon grading). Bodies need ≥ 3 cells (~150km²) —
+	//           the smallest feature the grid can honestly represent.
 	//   physics — frozen vs liquid is decided downstream in applyLakes
 	//             via Temperature() > 0. We don't filter here by
 	//             climate; we just identify the geological feature.
@@ -181,35 +178,53 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 				comp = append(comp, n)
 			}
 		}
-		if len(comp) < minLakeClusterCells {
-			continue
-		}
-		// The basin qualifies via its deepest cell, judged against
-		// that cell's zone amplitude. Surface = the basin's spill
-		// level (highest fill in the component).
-		var surface, maxDepth, deepAmp float64
+		// Surface = the basin's spill level (highest fill in the web).
+		var surface float64
 		for _, cell := range comp {
 			if f := elev[cell[1]][cell[0]]; f > surface {
 				surface = f
 			}
 		}
+		// Hysteresis: collect the amp/4 shelf, cluster it spatially,
+		// and keep only clusters that contain an amp/2 anchor and
+		// span at least minLakeClusterCells.
+		shelf := make(map[[2]int]bool)
+		var shelfSeeds [][2]int
+		isAnchor := make(map[[2]int]bool)
 		for _, cell := range comp {
 			d := surface - bedrock[cell[1]][cell[0]].Elevation
-			if d > maxDepth {
-				maxDepth = d
-				deepAmp = zoneAmplitude(bedrock[cell[1]][cell[0]].Zone)
+			amp := zoneAmplitude(bedrock[cell[1]][cell[0]].Zone)
+			if d >= amp/4 {
+				shelf[cell] = true
+				shelfSeeds = append(shelfSeeds, cell)
+			}
+			if d >= amp/2 {
+				isAnchor[cell] = true
 			}
 		}
-		if maxDepth < deepAmp/2 {
-			continue // noise-scale depression, not a basin
-		}
-		for _, cell := range comp {
-			lakes = append(lakes, LakeCell{
-				X:       int64(cell[0]),
-				Y:       int64(cell[1]),
-				Surface: surface,
-				Depth:   surface - bedrock[cell[1]][cell[0]].Elevation,
-			})
+		sortYX(shelfSeeds)
+		for _, body := range components(shelfSeeds, func(p [2]int) bool { return shelf[p] }) {
+			if len(body) < minLakeClusterCells {
+				continue
+			}
+			anchored := false
+			for _, cell := range body {
+				if isAnchor[cell] {
+					anchored = true
+					break
+				}
+			}
+			if !anchored {
+				continue
+			}
+			for _, cell := range body {
+				lakes = append(lakes, LakeCell{
+					X:       int64(cell[0]),
+					Y:       int64(cell[1]),
+					Surface: surface,
+					Depth:   surface - bedrock[cell[1]][cell[0]].Elevation,
+				})
+			}
 		}
 	}
 	return rivers, riverCells, lakes

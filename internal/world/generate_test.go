@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "6d011c87324813577867f56f3d9c8e26764e7a8dad712726e804ff75f936556f"},
-		{KyaNow, 42, "1f3f55adfd1b954fb431ff40c0dce6d02b6630dc500822e19dfea6047ec856e1"},
+		{KyaNow, 0, "8df258687346b1d8b2484f2dcc4558f11963050ec4be070b6844eafb09fca966"},
+		{KyaNow, 42, "0e8bf7eea75a935b9635fc8ddf20bfd3b58bdf6755d8711ed0b9ad074b8a2c4e"},
 		{KyaOldWorld, 0, "ef89aeb02aecfe9a2d2149fe4feb80dda6d624854f650ddce77078242be87643"},
 		{KyaOldWorld, 42, "858cb945fc3bebe0eef83cf7ec5920d91e12fb89f3103b4b58edfa1c2e0d08be"},
-		{100, 42, "d5c0031213381942dfee02038e684f781c9fe4e069c53fea0f8932e0c3712d12"}, // mid-cycle
+		{100, 42, "1302fc7b0bd7645ff9066d06e02849f9288183b82d46f2091cf482835df24aeb"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
