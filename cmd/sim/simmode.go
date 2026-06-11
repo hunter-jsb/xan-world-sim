@@ -103,8 +103,8 @@ func (m *model) startSim(sim *world.Sim) tea.Cmd {
 	m.simPaused = false
 	m.simSpeed = defaultSimSpeed
 	m.stashDeepTime()
-	m.preSimPolitical = m.politicalMode
-	m.politicalMode = true
+	m.preSimLens = m.lens
+	m.lens = lensPolitical
 	m.applySimData(true)
 	m.mapStr = m.buildMap()
 	return tea.Batch(m.simTickCmd(),
@@ -125,7 +125,7 @@ func (m *model) exitSim() {
 	m.simTags = nil
 	m.simNote, m.simNoteMajor = "", false
 	m.lastEventIdx = 0
-	m.politicalMode = m.preSimPolitical
+	m.lens = m.preSimLens
 	m.data.seats = m.preSimSeats
 	m.data.territory = m.preSimTerritory
 	m.data.cells = m.preSimCells

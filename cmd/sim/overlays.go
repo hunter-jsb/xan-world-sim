@@ -77,3 +77,16 @@ func (m *model) mapOverlays() []render.Overlay {
 	}
 	return out
 }
+
+// Lenses — the map's colorings, cycled with p. Order tells the
+// world's story outward: the land, who holds it, what the sky does
+// to it, what it's made of, what lives on it.
+const (
+	lensTerrain = iota
+	lensPolitical
+	lensClimate
+	lensGeo
+	lensEco
+)
+
+var lensNames = []string{"terrain", "political", "climate", "geological", "ecological"}

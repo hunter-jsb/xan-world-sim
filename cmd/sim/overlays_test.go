@@ -79,3 +79,33 @@ func TestFreezeTags(t *testing.T) {
 		t.Errorf("note deadline %v, want +2s", got.Sub(base))
 	}
 }
+
+// TestLensCycle: p walks all five lenses and wraps; entering a slice
+// defaults to political and leaving restores the lens you had.
+func TestLensCycle(t *testing.T) {
+	if len(lensNames) != 5 {
+		t.Fatalf("%d lenses, want 5", len(lensNames))
+	}
+	m := &model{}
+	seen := map[int]bool{m.lens: true}
+	for i := 0; i < len(lensNames); i++ {
+		m.lens = (m.lens + 1) % len(lensNames)
+		seen[m.lens] = true
+	}
+	if len(seen) != len(lensNames) || m.lens != lensTerrain {
+		t.Errorf("cycle visited %d lenses ending at %d, want all %d ending back at terrain",
+			len(seen), m.lens, len(lensNames))
+	}
+
+	// Sim entry forces political, exit restores.
+	m.lens = lensClimate
+	m.preSimLens = m.lens
+	m.lens = lensPolitical // what startSim does
+	if m.preSimLens != lensClimate {
+		t.Error("pre-sim lens not stashed")
+	}
+	m.lens = m.preSimLens // what exitSim does
+	if m.lens != lensClimate {
+		t.Error("lens not restored on exit")
+	}
+}

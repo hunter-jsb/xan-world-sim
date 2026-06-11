@@ -63,8 +63,10 @@ type model struct {
 	featureAt   map[[2]int64]db.GetNamedFeaturesInBoundsRow
 	territoryAt map[[2]int64]db.GetTerritoryInBoundsRow
 
-	// politicalMode tints the map by realm instead of terrain.
-	politicalMode bool
+	// lens selects the map's coloring: terrain, political, climate,
+	// geological, ecological. Glyphs never change — a lens recolors
+	// the world, it doesn't redraw it.
+	lens int
 
 	// popup is the active modal (nil = none). While open it captures
 	// all input; options dispatch by action ID in handlePopupChoice.
@@ -129,7 +131,7 @@ type model struct {
 	preSimTerritory []db.GetTerritoryInBoundsRow
 	preSimCells     []db.GetCellsInBoundsRow
 	preSimFeatures  []db.GetNamedFeaturesInBoundsRow
-	preSimPolitical bool
+	preSimLens      int
 
 	// Rise-and-fall bookkeeping: how many of the sim's cell patches
 	// are already in m.data.cells, the ruin count the features list
@@ -453,16 +455,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "H":
 			m.openHelpPopup()
 
-		// Political map mode: realm-tinted territory instead of terrain.
+		// Lenses: p cycles the map's coloring — terrain, political,
+		// climate, geological, ecological — in both modes.
 		case "p":
-			m.politicalMode = !m.politicalMode
-			if m.politicalMode {
-				m.status = "political map"
-			} else {
-				m.status = "terrain map"
-			}
+			m.lens = (m.lens + 1) % len(lensNames)
 			m.rebuildGrid()
-			m.mapStr = m.buildMap()
+			return m, m.showToast("lens: " + lensNames[m.lens])
 
 		// Expedition: s proposes a journey from the nearest settlement
 		// to the cursor (confirm popup); s abandons one in progress.
@@ -629,12 +627,24 @@ func (m *model) buildLookups() {
 	m.pois = buildPOIs(m.data)
 }
 
-// buildGridBuf constructs the grid for the active view mode.
+// rebuildGrid constructs the grid through the active lens.
 func (m *model) rebuildGrid() {
-	if m.politicalMode {
-		m.gridBuf = render.BuildPoliticalGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.data.territory, m.minX, m.minY, m.maxX, m.maxY)
-	} else {
-		m.gridBuf = render.BuildGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.minX, m.minY, m.maxX, m.maxY)
+	d := m.data
+	switch m.lens {
+	case lensPolitical:
+		m.gridBuf = render.BuildPoliticalGridBuf(d.cells, d.rivers, d.roads, d.territory, m.minX, m.minY, m.maxX, m.maxY)
+	case lensClimate:
+		climate := world.ClimateAt(m.kya)
+		m.gridBuf = render.BuildClimateGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY,
+			func(x, y int64, elev float64) float64 {
+				return world.Temperature(world.Latitude(int(y), world.DefaultLatTop, world.DefaultLatBottom), elev, climate)
+			})
+	case lensGeo:
+		m.gridBuf = render.BuildGeoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
+	case lensEco:
+		m.gridBuf = render.BuildEcoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
+	default:
+		m.gridBuf = render.BuildGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
 	}
 }
 
@@ -738,8 +748,8 @@ func (m model) View() string {
 	}
 	gI := world.GlacialIndex(m.kya)
 	title += dimStyle.Render("   glacial: ") + seedStyle.Render(fmt.Sprintf("%.2f", gI))
-	if m.politicalMode {
-		title += dimStyle.Render("   [") + statusStyle.Render("political") + dimStyle.Render("]")
+	if m.lens != lensTerrain {
+		title += dimStyle.Render("   [") + statusStyle.Render(lensNames[m.lens]) + dimStyle.Render("]")
 	}
 	if m.simMode && m.sim != nil {
 		run := "▸"
