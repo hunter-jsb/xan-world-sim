@@ -216,9 +216,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.regen(m.seed, next)
 
 		// Time-scrubbing: kya = kiloyears *before* present.
-		// `]` / right = forward in time (toward present, kya decreases).
-		// `[` / left  = backward in time (toward LGM, kya increases).
-		case "]", "right":
+		// `]` = forward in time (toward present, kya decreases).
+		// `[` = backward in time (toward LGM, kya increases).
+		case "]":
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -230,7 +230,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("→ %dkya", next)
 			return m, m.regen(m.seed, next)
-		case "[", "left":
+		case "[":
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -299,23 +299,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.expTickCmd()
 			}
 
-		// Cursor navigation — hjkl, instant (no regen needed).
-		case "h":
+		// Cursor navigation — hjkl or arrows, instant (no regen needed).
+		case "h", "left":
 			if m.curX > m.minX {
 				m.curX--
 				m.mapStr = m.buildMap()
 			}
-		case "l":
+		case "l", "right":
 			if m.curX < m.maxX {
 				m.curX++
 				m.mapStr = m.buildMap()
 			}
-		case "k":
+		case "k", "up":
 			if m.curY > m.minY {
 				m.curY--
 				m.mapStr = m.buildMap()
 			}
-		case "j":
+		case "j", "down":
 			if m.curY < m.maxY {
 				m.curY++
 				m.mapStr = m.buildMap()
@@ -509,9 +509,9 @@ func (m model) View() string {
 	if m.showHelp {
 		b.WriteString(m.legend)
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("hjkl cursor   s expedition to cursor   y depart   p political map"))
+		b.WriteString(dimStyle.Render("hjkl / arrows cursor   s expedition to cursor   y depart   p political map"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("] / [ ±5ka   } / { ±25ka   e now/LGM   r reroll   H close help   q quit"))
+		b.WriteString(dimStyle.Render("] / [ ±5ka   } / { (or shift+arrows) ±25ka   e now/LGM   r reroll   H close help   q quit"))
 		b.WriteString("\n\n")
 	}
 	// Footer: only what matters right now — modal expedition prompts,
