@@ -228,6 +228,15 @@ type Sim struct {
 	grievance map[[2]int64]float64
 	borders   map[[2]int64]int
 
+	// Dynamic borders (sim_borders.go): the static logistic cost of
+	// every cell, the contested marchland set, a version stamp the
+	// TUI uses to notice border refreshes, and the reusable Dijkstra
+	// buffer (one refresh runs one search per hall).
+	costGrid    [][]int
+	contested   map[[2]int64]bool
+	terrVersion int
+	fieldBuf    [][]int
+
 	nextRealmID int64
 }
 
@@ -392,6 +401,8 @@ func NewSim(seed int64, kya int) *Sim {
 		s.riverAt[[2]int64{r.X, r.Y}] = true
 	}
 	s.grievance = make(map[[2]int64]float64)
+	s.contested = make(map[[2]int64]bool)
+	s.buildCostGrid()
 	s.recomputeBorders()
 
 	// Heritage lines: each hall's founding house is as deterministic as
@@ -457,9 +468,11 @@ func (s *Sim) StepYear() []SimEvent {
 	if s.stepWars(emit) {
 		changed = true
 	}
-	if changed {
-		s.W.Territory = s.W.Territory[:0]
-		s.W.claimTerritory()
+	// Borders re-settle after any structural change, and on a steady
+	// cadence regardless — conviction and war fortune move them even
+	// when no hall changed hands.
+	if changed || s.Year%borderRefreshYears == 0 {
+		s.reclaimTerritory()
 		s.recomputeBorders()
 	}
 
@@ -749,8 +762,8 @@ func (s *Sim) maybeDissolve(realmID int64, emit func(SimEvent)) {
 	}
 }
 
-// setRegion flips one map cell's region and records the patch for the
-// TUI's render data.
+// setRegion flips one map cell's region, keeps the cost grid honest,
+// and records the patch for the TUI's render data.
 func (s *Sim) setRegion(x, y, regionID int64) {
 	for i := range s.W.Regions {
 		rc := &s.W.Regions[i]
@@ -759,6 +772,7 @@ func (s *Sim) setRegion(x, y, regionID int64) {
 			break
 		}
 	}
+	s.patchCostGrid(x, y, regionID)
 	s.patches = append(s.patches, CellPatch{X: x, Y: y, Kind: RegionKind(regionID)})
 }
 

@@ -3,13 +3,16 @@ package db
 import "context"
 
 // GetTerritoryInBoundsRow is one claimed land cell with its owning
-// realm, for the political map view and info panel.
+// realm, for the political map view and info panel. Contested is
+// never set by the query — deep time's borders are settled; only the
+// simulation overlay marks contested marchland.
 type GetTerritoryInBoundsRow struct {
 	X         int64  `json:"x"`
 	Y         int64  `json:"y"`
 	RealmID   int64  `json:"realm_id"`
 	RealmName string `json:"realm_name"`
 	IsCrown   bool   `json:"is_crown"`
+	Contested bool   `json:"contested"`
 }
 
 const getTerritoryInBounds = `

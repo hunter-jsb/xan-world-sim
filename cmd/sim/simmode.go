@@ -102,7 +102,8 @@ func (m *model) stashDeepTime() {
 	m.preSimCells = m.data.cells
 	m.data.cells = append([]db.GetCellsInBoundsRow(nil), m.data.cells...)
 	m.simPatchesApplied = 0
-	m.simRuinCount = -1 // force the first features build
+	m.simRuinCount = -1   // force the first features build
+	m.simTerrVersion = -1 // force the first territory build
 }
 
 // simTickCmd schedules the next simulated year at the current speed.
@@ -121,21 +122,16 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 	}
 	if m.popup == nil && m.exp == nil && !m.simPaused && m.sim != nil {
 		events := m.sim.StepYear()
-		territoryChanged := false
 		var majors []world.SimEvent
 		minor := ""
 		for _, e := range events {
-			switch e.Kind {
-			case "secede", "swear", "dissolve", "ruin", "founding", "capture":
-				territoryChanged = true
-			}
 			if e.Major {
 				majors = append(majors, e)
 			} else {
 				minor = e.Text
 			}
 		}
-		m.applySimData(territoryChanged)
+		m.applySimData(false)
 		if minor != "" {
 			m.status = fmt.Sprintf("year %d — %s", m.sim.Year, minor)
 		} else {
@@ -151,12 +147,16 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 
 // applySimData overlays the simulation's political state onto the
 // render data, in the same row shapes the DB queries produce. Seats
-// change every year (allegiance, pressure); territory only when realm
-// membership moved, so the grid rebuild is gated on that.
-func (m *model) applySimData(territoryChanged bool) {
+// change every year (allegiance, pressure); territory only when the
+// engine's borders re-settled (its version stamp moves), so the grid
+// rebuild is gated on that. force rebuilds everything (mode entry,
+// stash refresh).
+func (m *model) applySimData(force bool) {
 	if m.sim == nil {
 		return
 	}
+	territoryChanged := force || m.sim.TerritoryVersion() != m.simTerrVersion
+	m.simTerrVersion = m.sim.TerritoryVersion()
 	w := m.sim.W
 	realmByID := make(map[int64]world.Realm, len(w.Realms))
 	for _, r := range w.Realms {
@@ -182,7 +182,10 @@ func (m *model) applySimData(territoryChanged bool) {
 	if territoryChanged {
 		terr := make([]db.GetTerritoryInBoundsRow, len(w.Territory))
 		for i, tc := range w.Territory {
-			row := db.GetTerritoryInBoundsRow{X: tc.X, Y: tc.Y, RealmID: tc.RealmID}
+			row := db.GetTerritoryInBoundsRow{
+				X: tc.X, Y: tc.Y, RealmID: tc.RealmID,
+				Contested: m.sim.Contested(tc.X, tc.Y),
+			}
 			if r, ok := realmByID[tc.RealmID]; ok {
 				row.RealmName = r.Name
 				row.IsCrown = r.IsCrown

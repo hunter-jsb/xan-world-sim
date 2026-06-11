@@ -313,6 +313,11 @@ func RealmColor(realmID int64, isCrown bool) string {
 // political view — dim enough to read "no realm holds this".
 const unclaimedColor = "238"
 
+// contestedColor marks contested marchland in the political view —
+// pale no-man's gray, brighter than the wilds, claimed by no single
+// hue because no single realm firmly holds it.
+const contestedColor = "250"
+
 // waterOrIceKind reports kinds that keep their geographic coloring in
 // the political view: water and ice are never claimed, and keeping
 // them recognizable anchors the political map to the geography.
@@ -354,7 +359,13 @@ func BuildPoliticalGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverC
 	colorOf := func(kind string, elev float64, x, y int64) (string, bool) {
 		if t, ok := realmAt[[2]int64{x, y}]; ok {
 			spec := kinds[kind]
-			return RealmColor(t.RealmID, t.IsCrown), spec.tierLabel != "" || spec.shading.bold
+			bold := spec.tierLabel != "" || spec.shading.bold
+			if t.Contested && spec.tierLabel == "" {
+				// Halls keep their banner's color even on a hot
+				// border; the land between them goes no-man's gray.
+				return contestedColor, bold
+			}
+			return RealmColor(t.RealmID, t.IsCrown), bold
 		}
 		if waterOrIceKind(kind) {
 			return colorFor(kind, elev)

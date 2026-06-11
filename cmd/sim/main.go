@@ -108,10 +108,12 @@ type model struct {
 	preSimPolitical bool
 
 	// Rise-and-fall bookkeeping: how many of the sim's cell patches
-	// are already in m.data.cells, and the ruin count the features
-	// list was last built against.
+	// are already in m.data.cells, the ruin count the features list
+	// was last built against, and the engine's territory version the
+	// territory rows were last built from.
 	simPatchesApplied int
 	simRuinCount      int
+	simTerrVersion    int
 
 	minX, minY, maxX, maxY int64
 }
@@ -948,6 +950,9 @@ func (m *model) openCellPopup() {
 		// Heritage lines live only inside a running slice — deep time
 		// doesn't track who reigns.
 		if m.simMode && m.sim != nil {
+			if m.sim.Contested(m.curX, m.curY) {
+				add("contested marchland — two banners claim this ground")
+			}
 			if h, since := m.sim.HouseAt(m.curX, m.curY); h != "" {
 				if since > 0 {
 					add("house: House %s (took the hall in year %d)", h, since)

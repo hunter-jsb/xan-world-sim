@@ -147,6 +147,36 @@ func TestSim_NoCrownAge(t *testing.T) {
 	checkPolity(t, *s.W)
 }
 
+// TestSim_DynamicBorders: the living borders breathe — territory
+// re-settles on cadence, contested marchland appears where realms
+// meet, and every contested cell is claimed land.
+func TestSim_DynamicBorders(t *testing.T) {
+	s := NewSim(42, 0)
+	genTerritory := len(s.W.Territory)
+	for y := 0; y < 600; y++ {
+		s.StepYear()
+	}
+	if s.TerritoryVersion() == 0 {
+		t.Fatal("borders never re-settled in six centuries")
+	}
+	owned := make(map[[2]int64]bool, len(s.W.Territory))
+	for _, tc := range s.W.Territory {
+		owned[[2]int64{tc.X, tc.Y}] = true
+	}
+	if len(s.contested) == 0 {
+		t.Error("no contested marchland after six centuries of living borders")
+	}
+	for p := range s.contested {
+		if !owned[p] {
+			t.Errorf("contested cell (%d,%d) is unclaimed", p[0], p[1])
+		}
+	}
+	if len(s.W.Territory) == genTerritory {
+		t.Logf("territory size unchanged (%d) — suspicious but not impossible", genTerritory)
+	}
+	checkPolity(t, *s.W)
+}
+
 // TestSim_Wars: grievance must become war, war must capture and must
 // end. Every war that began has ended (or still stands at the close);
 // no standing war references a dead realm.
