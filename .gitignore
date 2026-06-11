@@ -3,3 +3,4 @@ world.db
 *.db-shm
 *.db-wal
 /sim
+/dist/

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -693,9 +694,10 @@ func (m model) regen(seed int64, kya int) tea.Cmd {
 	}
 }
 
-// simLog appends a timestamped line to /tmp/xan-sim.log.
+// simLog appends a timestamped line to xan-sim.log in the OS temp
+// directory (/tmp on Linux, %TMP% on Windows).
 func simLog(format string, args ...any) {
-	f, err := os.OpenFile("/tmp/xan-sim.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filepath.Join(os.TempDir(), "xan-sim.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
