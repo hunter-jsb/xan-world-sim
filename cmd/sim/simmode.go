@@ -28,26 +28,25 @@ var (
 	simSpeedNames = []string{"½×", "1×", "2×", "4×", "8×"}
 )
 
-// adjustSimSpeed nudges the year clock by one notch (dir ±1).
-func (m *model) adjustSimSpeed(dir int) {
+// adjustSimSpeed nudges the year clock by one notch (dir ±1) and
+// returns the message to toast.
+func (m *model) adjustSimSpeed(dir int) string {
 	next := m.simSpeed + dir
 	switch {
 	case next < 0:
-		m.status = "the years already crawl (" + simSpeedNames[0] + ")"
-		return
+		return "the years already crawl (" + simSpeedNames[0] + ")"
 	case next >= len(simSpeeds):
-		m.status = "the years already race (" + simSpeedNames[len(simSpeeds)-1] + ")"
-		return
+		return "the years already race (" + simSpeedNames[len(simSpeeds)-1] + ")"
 	}
 	m.simSpeed = next
-	m.status = "the years run at " + simSpeedNames[m.simSpeed]
+	return "the years run at " + simSpeedNames[m.simSpeed]
 }
 
 // setSimSpeed jumps straight to a notch — the braces snap to the
 // ends of the ladder like they take the big steps in deep time.
-func (m *model) setSimSpeed(i int) {
+func (m *model) setSimSpeed(i int) string {
 	m.simSpeed = i
-	m.status = "the years run at " + simSpeedNames[m.simSpeed]
+	return "the years run at " + simSpeedNames[m.simSpeed]
 }
 
 // simTickMsg advances the year clock; gen guards against stale ticks
@@ -88,9 +87,9 @@ func (m *model) startSim(sim *world.Sim) tea.Cmd {
 	m.preSimPolitical = m.politicalMode
 	m.politicalMode = true
 	m.applySimData(true)
-	m.status = "the slice is pinned — years pass; space pauses, S returns to deep time"
 	m.mapStr = m.buildMap()
-	return m.simTickCmd()
+	return tea.Batch(m.simTickCmd(),
+		m.showToast("the slice is pinned — the years pass"))
 }
 
 // exitSim restores the deep-time equilibrium from the stash — the sim
@@ -140,15 +139,20 @@ func (m *model) simTickCmd() tea.Cmd {
 }
 
 // simPing is one alarm mark on the map: an event happened at (x, y)
-// and the cell stays tinted until the given year.
+// and the cell stays tinted until the given year. Headlines also
+// carry a label — a small in-map callout tag — for a shorter while.
 type simPing struct {
-	x, y  int64
-	until int
+	x, y       int64
+	until      int
+	label      string
+	labelUntil int
 }
 
 const (
 	pingYears = 10 // how long an event tints its cell
 	newsYears = 8  // how long a headline holds the status line
+	tagYears  = 6  // how long a headline's in-map callout tag shows
+	maxTags   = 3  // newest tags shown at once — annotate, don't bury
 )
 
 // handleSimTick advances one year unless something holds the clock —
@@ -170,7 +174,12 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 		for i := range events {
 			e := &events[i]
 			if e.Major || e.Kind == "raid" {
-				m.simPings = append(m.simPings, simPing{x: e.X, y: e.Y, until: m.sim.Year + pingYears})
+				p := simPing{x: e.X, y: e.Y, until: m.sim.Year + pingYears}
+				if e.Major {
+					p.label = fmt.Sprintf("y%d %s", e.Year, e.Text)
+					p.labelUntil = m.sim.Year + tagYears
+				}
+				m.simPings = append(m.simPings, p)
 			}
 			if e.Major {
 				lastMajor = e

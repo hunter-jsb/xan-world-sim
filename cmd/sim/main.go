@@ -84,6 +84,11 @@ type model struct {
 	simNoteUntil int
 	lastEventIdx int
 
+	// Toast: a transient corner notice (overlays.go); gen guards the
+	// fade timer against replacement by a newer toast.
+	toastText string
+	toastGen  int
+
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
@@ -331,10 +336,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.simMode {
 				m.simPaused = !m.simPaused
 				if m.simPaused {
-					m.status = "the years hold — space resumes"
-				} else {
-					m.status = "the years resume"
+					return m, m.showToast("the years hold — space resumes")
 				}
+				return m, m.showToast("the years resume")
 			}
 		case "L":
 			m.openChroniclePopup(-1)
@@ -370,8 +374,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `}`/`{` snap to the ends of the ladder.
 		case "]":
 			if m.simMode {
-				m.adjustSimSpeed(1)
-				return m, nil
+				return m, m.showToast(m.adjustSimSpeed(1))
 			}
 			if m.deepTimeLocked() {
 				return m, nil
@@ -386,8 +389,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.regen(m.seed, next)
 		case "[":
 			if m.simMode {
-				m.adjustSimSpeed(-1)
-				return m, nil
+				return m, m.showToast(m.adjustSimSpeed(-1))
 			}
 			if m.deepTimeLocked() {
 				return m, nil
@@ -402,8 +404,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
 			if m.simMode {
-				m.setSimSpeed(len(simSpeeds) - 1)
-				return m, nil
+				return m, m.showToast(m.setSimSpeed(len(simSpeeds) - 1))
 			}
 			if m.deepTimeLocked() {
 				return m, nil
@@ -418,8 +419,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
 			if m.simMode {
-				m.setSimSpeed(0)
-				return m, nil
+				return m, m.showToast(m.setSimSpeed(0))
 			}
 			if m.deepTimeLocked() {
 				return m, nil
@@ -487,6 +487,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mapStr = m.buildMap()
 			}
 		}
+
+	case toastMsg:
+		if msg.gen == m.toastGen && m.toastText != "" {
+			m.toastText = ""
+			m.mapStr = m.buildMap()
+		}
+		return m, nil
 
 	case simTickMsg:
 		return m, m.handleSimTick(msg)
@@ -632,6 +639,9 @@ func (m *model) buildMap() string {
 	if m.popup != nil {
 		box := render.PopupBox(m.popup.title, m.popup.body, popupLabels(m.popup.opts), m.popup.sel)
 		return m.gridBuf.RenderWithOverlay(m.curX, m.curY, m.overlayPath(), box)
+	}
+	if overlays := m.mapOverlays(); len(overlays) > 0 {
+		return m.gridBuf.RenderWithCallouts(m.curX, m.curY, m.overlayPath(), overlays)
 	}
 	return m.gridBuf.Render(m.curX, m.curY, m.overlayPath())
 }
@@ -932,6 +942,8 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 
 	case popExitSim:
 		m.exitSim()
+		m.mapStr = m.buildMap()
+		return m, m.showToast("returned to deep time")
 
 	case popJumpXY:
 		m.curX, m.curY = pop.cellX, pop.cellY

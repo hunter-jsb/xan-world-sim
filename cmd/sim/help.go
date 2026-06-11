@@ -21,7 +21,10 @@ func (m *model) helpTopics() []helpTopic {
 			"rivers flow as > < v \\ / arrows toward their mouths; roads are · dots",
 			"ruined halls render as ash-gray h — sacked in a simulation, hoppable like any place",
 			"the political view (p) tints claimed land by realm; unclaimed wilds go dim,",
-			"contested marchland pale gray, and water keeps its color to anchor the map")},
+			"contested marchland pale gray, and water keeps its color to anchor the map",
+			"",
+			"the map annotates itself: named places tooltip beside the cursor, notices",
+			"toast in the top-right corner, and fresh headlines tag the cells they hit")},
 
 		{"time — deep time & the slice", []string{
 			"the world is one continuous function of (seed, kya) — kya is kiloyears before present.",
