@@ -60,8 +60,7 @@ func (m *model) startSim(sim *world.Sim) tea.Cmd {
 	m.sim = sim
 	m.simPaused = false
 	m.simSpeed = 1
-	m.preSimSeats = m.data.seats
-	m.preSimTerritory = m.data.territory
+	m.stashDeepTime()
 	m.preSimPolitical = m.politicalMode
 	m.politicalMode = true
 	m.applySimData(true)
@@ -83,10 +82,27 @@ func (m *model) exitSim() {
 	m.politicalMode = m.preSimPolitical
 	m.data.seats = m.preSimSeats
 	m.data.territory = m.preSimTerritory
+	m.data.cells = m.preSimCells
+	m.data.features = m.preSimFeatures
 	m.preSimSeats, m.preSimTerritory = nil, nil
+	m.preSimCells, m.preSimFeatures = nil, nil
 	m.buildLookups()
 	m.rebuildGrid()
 	m.status = "returned to deep time"
+}
+
+// stashDeepTime keeps the deep-time rows the sim will overlay. Seats,
+// territory, and features are replaced wholesale by applySimData, so
+// references suffice; cells are patched element-wise (halls razed or
+// raised), so the working copy is a clone.
+func (m *model) stashDeepTime() {
+	m.preSimSeats = m.data.seats
+	m.preSimTerritory = m.data.territory
+	m.preSimFeatures = m.data.features
+	m.preSimCells = m.data.cells
+	m.data.cells = append([]db.GetCellsInBoundsRow(nil), m.data.cells...)
+	m.simPatchesApplied = 0
+	m.simRuinCount = -1 // force the first features build
 }
 
 // simTickCmd schedules the next simulated year at the current speed.
@@ -110,7 +126,7 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 		minor := ""
 		for _, e := range events {
 			switch e.Kind {
-			case "secede", "swear", "dissolve":
+			case "secede", "swear", "dissolve", "ruin", "founding":
 				territoryChanged = true
 			}
 			if e.Major {
@@ -175,8 +191,36 @@ func (m *model) applySimData(territoryChanged bool) {
 		}
 		m.data.territory = terr
 	}
+
+	// Rise and fall: splice new map-cell patches (halls razed or
+	// raised) into the cloned cells, and rebuild the features list
+	// when the set of ruins moved.
+	gridDirty := false
+	patches := m.sim.CellPatches()
+	for ; m.simPatchesApplied < len(patches); m.simPatchesApplied++ {
+		p := patches[m.simPatchesApplied]
+		for ci := range m.data.cells {
+			if m.data.cells[ci].X == p.X && m.data.cells[ci].Y == p.Y {
+				m.data.cells[ci].Kind = p.Kind
+				break
+			}
+		}
+		gridDirty = true
+	}
+	if ruins := m.sim.Ruins(); len(ruins) != m.simRuinCount {
+		m.simRuinCount = len(ruins)
+		feats := append([]db.GetNamedFeaturesInBoundsRow(nil), m.preSimFeatures...)
+		for _, r := range ruins {
+			feats = append(feats, db.GetNamedFeaturesInBoundsRow{
+				X: r.X, Y: r.Y, Kind: "ruin", Name: r.Name,
+				Detail: fmt.Sprintf("sacked in year %d", r.Year),
+			})
+		}
+		m.data.features = feats
+	}
+
 	m.buildLookups()
-	if territoryChanged {
+	if territoryChanged || gridDirty {
 		m.rebuildGrid()
 	}
 }

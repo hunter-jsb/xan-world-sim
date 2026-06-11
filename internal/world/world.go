@@ -35,6 +35,7 @@ const (
 	RegionDrakeNest     int64 = 25
 	RegionWyvernRookery int64 = 26
 	RegionCapital       int64 = 27
+	RegionRuin          int64 = 28
 )
 
 type RegionCell struct {

@@ -19,6 +19,10 @@ func simFingerprint(s *Sim) string {
 		fmt.Fprintf(&b, "realm %d %s crown=%v\n", r.ID, r.Name, r.IsCrown)
 	}
 	fmt.Fprintf(&b, "territory=%d\n", len(s.W.Territory))
+	for _, r := range s.ruins {
+		fmt.Fprintf(&b, "ruin %s (%d,%d) y%d\n", r.Name, r.X, r.Y, r.Year)
+	}
+	fmt.Fprintf(&b, "patches=%d\n", len(s.patches))
 	for _, e := range s.Log {
 		fmt.Fprintf(&b, "y%d [%s] %s @(%d,%d) major=%v\n", e.Year, e.Kind, e.Text, e.X, e.Y, e.Major)
 	}
@@ -67,6 +71,7 @@ func TestSim_Invariants(t *testing.T) {
 				}
 				if y%100 == 0 {
 					checkPolity(t, *s.W)
+					checkSimArrays(t, s)
 					if t.Failed() {
 						t.Fatalf("polity invariants broken at year %d", y)
 					}
@@ -91,7 +96,7 @@ func TestSim_EventsFire(t *testing.T) {
 				epoch = &ev
 			}
 			switch e.Kind {
-			case "secede", "swear", "dissolve", "epoch":
+			case "secede", "swear", "dissolve", "epoch", "ruin", "founding":
 				if !e.Major {
 					t.Errorf("year %d: %s event not Major", e.Year, e.Kind)
 				}
@@ -124,9 +129,12 @@ func TestSim_NoCrownAge(t *testing.T) {
 	}
 	for y := 0; y < 300; y++ {
 		for _, e := range s.StepYear() {
-			// Lairs stir and lords die under the ice too — but no
-			// crown politics: no stances, no oaths, no realms moving.
-			if e.Kind != "lair" && e.Kind != "succession" {
+			// Lairs stir, lords die, and halls may burn or rise under
+			// the ice too — but no crown politics: no stances, no
+			// oaths, no realms moving by choice.
+			switch e.Kind {
+			case "lair", "succession", "ruin", "founding", "dissolve":
+			default:
 				t.Errorf("year %d: %s event in a crownless age: %s", e.Year, e.Kind, e.Text)
 			}
 		}
@@ -136,6 +144,67 @@ func TestSim_NoCrownAge(t *testing.T) {
 			t.Errorf("seat %q allegiance %g in a crownless age, want 0", st.Name, st.Allegiance)
 		}
 	}
+	checkPolity(t, *s.W)
+}
+
+// checkSimArrays asserts every per-seat parallel array stays aligned
+// with W.Seats through ruins (splices) and foundings (appends), and
+// that the capital index still points at the capital.
+func checkSimArrays(t *testing.T, s *Sim) {
+	t.Helper()
+	n := len(s.W.Seats)
+	for name, l := range map[string]int{
+		"base": len(s.base), "temperament": len(s.temperament), "stance": len(s.stance),
+		"lowStreak": len(s.lowStreak), "highStreak": len(s.highStreak), "ruinStreak": len(s.ruinStreak),
+		"house": len(s.house), "houseSince": len(s.houseSince), "reignEnd": len(s.reignEnd),
+	} {
+		if l != n {
+			t.Errorf("array %s has %d entries, %d seats", name, l, n)
+		}
+	}
+	if s.capitalIdx >= 0 {
+		if s.capitalIdx >= n || s.W.Seats[s.capitalIdx].Tier != RegionCapital {
+			t.Errorf("capitalIdx %d no longer points at the capital", s.capitalIdx)
+		}
+	}
+}
+
+// TestSim_RiseAndFall: over three millennia halls must both fall and
+// rise; fallen halls leave RegionRuin scars with no living seat, and
+// raised halls stand on seat-tier cells inside their realm.
+func TestSim_RiseAndFall(t *testing.T) {
+	s := NewSim(42, 0)
+	ruinEvents, foundingEvents := 0, 0
+	for y := 0; y < 3000; y++ {
+		for _, e := range s.StepYear() {
+			switch e.Kind {
+			case "ruin":
+				ruinEvents++
+			case "founding":
+				foundingEvents++
+			}
+		}
+	}
+	if ruinEvents == 0 {
+		t.Error("no hall fell in three millennia — dragonfire is toothless")
+	}
+	if foundingEvents == 0 {
+		t.Error("no hall rose in three millennia — the realms are sterile")
+	}
+	g := gridOf(s.W.Regions)
+	seatAt := make(map[[2]int64]bool, len(s.W.Seats))
+	for _, st := range s.W.Seats {
+		seatAt[[2]int64{st.X, st.Y}] = true
+	}
+	for _, r := range s.Ruins() {
+		if seatAt[[2]int64{r.X, r.Y}] {
+			t.Errorf("ruin %q at (%d,%d) coincides with a living seat", r.Name, r.X, r.Y)
+		}
+		if got := g.regionAt([2]int{int(r.X), int(r.Y)}); got != RegionRuin {
+			t.Errorf("ruin %q cell is region %d, want RegionRuin", r.Name, got)
+		}
+	}
+	checkSimArrays(t, s)
 	checkPolity(t, *s.W)
 }
 

@@ -79,6 +79,29 @@ const (
 	// name stream (both derive from the same cell coordinates).
 	houseSeedSalt = 7331
 
+	// Ruin: only dragonfire razes halls — pressure 15 exceeds what any
+	// drake swarm or rookery can project (drake max ≈ 9.3 at rampant)
+	// and needs a genuinely rampant dragon (activity ≥ 1.5) within ~2
+	// cells, sustained ruinYears straight. Marches and Headwaters are
+	// built for exactly this life — "battle-hardened," the wall — and
+	// withstand marchHardening× more before they break; without it,
+	// every near-mountain hall burns in the first decades of every
+	// slice. The crown itself never falls (the capital sits in the
+	// calm heartland by construction).
+	ruinPressure   = 15.0
+	ruinYears      = 12
+	marchHardening = 1.3
+
+	// Founding: each realm has a small yearly chance to raise a new
+	// hall, given a calm site (local pressure ≤ foundCalmPressure)
+	// inside its own territory, clear of existing halls and ruins by
+	// seatMinSep. River-adjacent sites found Tributaries; the rest
+	// found Outholds. Ruins inside the territory are resettled first —
+	// the old name returns, under a new house.
+	foundChance       = 0.0005
+	foundCalmPressure = 2.0
+	seatMinSep        = 4
+
 	// Membership changes demand sustained conviction, not a bad year.
 	// Both thresholds mirror crownThreshold — the same boundary
 	// formRealms partitions by at generation — offset by a hysteresis
@@ -157,6 +180,18 @@ type Sim struct {
 	// (realm ID → chronicle note); realms that predate it have none.
 	lineage map[int64]string
 
+	// Rise and fall: ruinStreak counts consecutive years under
+	// ruinPressure (indexed like W.Seats); ruins are the halls lost
+	// this slice; patches are map-cell kind changes for the TUI to
+	// splice into its render data; capDist is the capital's logistic
+	// field, kept so founded seats can score their allegiance base;
+	// riverAt marks river cells for founding-site tier choice.
+	ruinStreak []int
+	ruins      []RuinSite
+	patches    []CellPatch
+	capDist    [][]int
+	riverAt    map[[2]int64]bool
+
 	// Per-lair state, indexed like lairs (all three tiers flattened).
 	lairs     []lairSite
 	activity  []float64 // raid-activity multiplier in [0, activityMax]
@@ -195,6 +230,28 @@ func (s *Sim) RealmLineage(realmID int64) string {
 	return s.lineage[realmID]
 }
 
+// RuinSite is a hall lost during this slice — it stays on the map as
+// a ruin until (unless) someone raises it again.
+type RuinSite struct {
+	X, Y int64
+	Name string
+	Year int
+}
+
+// CellPatch is one map-cell kind change the sim has made (a hall
+// razed or raised); the TUI splices these into its render data.
+type CellPatch struct {
+	X, Y int64
+	Kind string
+}
+
+// Ruins lists the slice's fallen halls (resettled ones drop off).
+func (s *Sim) Ruins() []RuinSite { return s.ruins }
+
+// CellPatches returns every map-cell change so far, in order. The TUI
+// tracks how many it has applied; the list only grows.
+func (s *Sim) CellPatches() []CellPatch { return s.patches }
+
 // NewSim generates the slice's world and prepares it for stepping.
 // The world is generated fresh (never loaded) so the sim's geography
 // is exactly the deterministic snapshot for (seed, kya).
@@ -231,12 +288,13 @@ func NewSim(seed int64, kya int) *Sim {
 	s.stance = make([]string, len(w.Seats))
 	s.lowStreak = make([]int, len(w.Seats))
 	s.highStreak = make([]int, len(w.Seats))
+	s.ruinStreak = make([]int, len(w.Seats))
 	if s.capitalIdx >= 0 {
 		capSeat := w.Seats[s.capitalIdx]
-		dist := w.logisticCostFrom([][2]int{{int(capSeat.X), int(capSeat.Y)}})
+		s.capDist = w.logisticCostFrom([][2]int{{int(capSeat.X), int(capSeat.Y)}})
 		for i := range w.Seats {
 			st := w.Seats[i]
-			if L := dist[st.Y][st.X]; L >= 0 {
+			if L := s.capDist[st.Y][st.X]; L >= 0 {
 				s.base[i] = allegianceBase(L, st.Tier)
 			} else {
 				s.base[i] = -1 // beyond the crown's world
@@ -248,6 +306,10 @@ func NewSim(seed int64, kya int) *Sim {
 			s.base[i] = -1
 			s.stance[i] = AllegianceStance(0)
 		}
+	}
+	s.riverAt = make(map[[2]int64]bool, len(w.Rivers))
+	for _, r := range w.Rivers {
+		s.riverAt[[2]int64{r.X, r.Y}] = true
 	}
 
 	// Heritage lines: each hall's founding house is as deterministic as
@@ -267,16 +329,25 @@ func NewSim(seed int64, kya int) *Sim {
 	s.activity = make([]float64, len(s.lairs))
 	s.lairState = make([]int, len(s.lairs))
 	s.lairNoted = make([]bool, len(s.lairs))
-	for i, l := range s.lairs {
+	for i := range s.activity {
 		s.activity[i] = 1
-		for _, st := range w.Seats {
+	}
+	s.recomputeLairNoted()
+	return s
+}
+
+// recomputeLairNoted refreshes which lairs have a seat in raid range —
+// the set shifts when halls fall or rise.
+func (s *Sim) recomputeLairNoted() {
+	for i, l := range s.lairs {
+		s.lairNoted[i] = false
+		for _, st := range s.W.Seats {
 			if lairPressureAt(l, st.X, st.Y, 1) > 0 {
 				s.lairNoted[i] = true
 				break
 			}
 		}
 	}
-	return s
 }
 
 // StepYear advances the slice one year and returns the year's events
@@ -295,6 +366,12 @@ func (s *Sim) StepYear() []SimEvent {
 	s.stepAllegiance(emit)
 	s.stepSuccessions(emit)
 	changed := s.stepMembership(emit)
+	if s.stepRuins(emit) {
+		changed = true
+	}
+	if s.stepFoundings(emit) {
+		changed = true
+	}
 	if changed {
 		s.W.Territory = s.W.Territory[:0]
 		s.W.claimTerritory()
@@ -580,22 +657,283 @@ func (s *Sim) swear(i int, emit func(SimEvent)) {
 	emit(SimEvent{Kind: "swear", Major: true, X: st.X, Y: st.Y,
 		Text: fmt.Sprintf("%s swears to the crown of %s", st.Name, crownName)})
 
-	if oldRealm == 0 {
+	s.maybeDissolve(oldRealm, emit)
+}
+
+// maybeDissolve removes a realm that no longer holds a single hall.
+func (s *Sim) maybeDissolve(realmID int64, emit func(SimEvent)) {
+	if realmID == 0 {
 		return
 	}
 	for j := range s.W.Seats {
-		if s.W.Seats[j].RealmID == oldRealm {
+		if s.W.Seats[j].RealmID == realmID {
 			return // the league lives on
 		}
 	}
 	for j, r := range s.W.Realms {
-		if r.ID == oldRealm {
+		if r.ID == realmID {
 			s.W.Realms = append(s.W.Realms[:j], s.W.Realms[j+1:]...)
 			emit(SimEvent{Kind: "dissolve", Major: true, X: r.SeatX, Y: r.SeatY,
 				Text: fmt.Sprintf("the league of %s dissolves", r.Name)})
 			return
 		}
 	}
+}
+
+// setRegion flips one map cell's region and records the patch for the
+// TUI's render data.
+func (s *Sim) setRegion(x, y, regionID int64) {
+	for i := range s.W.Regions {
+		rc := &s.W.Regions[i]
+		if rc.X == x && rc.Y == y {
+			rc.RegionID = regionID
+			break
+		}
+	}
+	s.patches = append(s.patches, CellPatch{X: x, Y: y, Kind: RegionKind(regionID)})
+}
+
+// removeSeat splices seat i out of the world and every parallel
+// array. The capital is never removed, so capitalIdx only shifts.
+func (s *Sim) removeSeat(i int) {
+	s.W.Seats = append(s.W.Seats[:i], s.W.Seats[i+1:]...)
+	s.base = append(s.base[:i], s.base[i+1:]...)
+	s.temperament = append(s.temperament[:i], s.temperament[i+1:]...)
+	s.stance = append(s.stance[:i], s.stance[i+1:]...)
+	s.lowStreak = append(s.lowStreak[:i], s.lowStreak[i+1:]...)
+	s.highStreak = append(s.highStreak[:i], s.highStreak[i+1:]...)
+	s.ruinStreak = append(s.ruinStreak[:i], s.ruinStreak[i+1:]...)
+	s.house = append(s.house[:i], s.house[i+1:]...)
+	s.houseSince = append(s.houseSince[:i], s.houseSince[i+1:]...)
+	s.reignEnd = append(s.reignEnd[:i], s.reignEnd[i+1:]...)
+	if i < s.capitalIdx {
+		s.capitalIdx--
+	}
+}
+
+// stepRuins breaks halls that have burned too long: a seat held at or
+// above ruinPressure for ruinYears is sacked — struck from the living
+// world, its cell scarred to RegionRuin, its realm dissolved if it was
+// the last hall. Only dragonfire reaches the threshold.
+func (s *Sim) stepRuins(emit func(SimEvent)) bool {
+	var doomed []int
+	for i := range s.W.Seats {
+		if i == s.capitalIdx {
+			s.ruinStreak[i] = 0 // the crown holds
+			continue
+		}
+		threshold := ruinPressure
+		if tier := s.W.Seats[i].Tier; tier == RegionMarch || tier == RegionHeadwater {
+			threshold *= marchHardening // the wall is built for this
+		}
+		if s.W.Seats[i].Pressure >= threshold {
+			s.ruinStreak[i]++
+		} else {
+			s.ruinStreak[i] = 0
+		}
+		if s.ruinStreak[i] >= ruinYears {
+			doomed = append(doomed, i)
+		}
+	}
+	if len(doomed) == 0 {
+		return false
+	}
+	var realmsTouched []int64
+	for _, i := range doomed {
+		st := s.W.Seats[i]
+		s.ruins = append(s.ruins, RuinSite{X: st.X, Y: st.Y, Name: st.Name, Year: s.Year})
+		s.setRegion(st.X, st.Y, RegionRuin)
+		if st.RealmID != 0 {
+			realmsTouched = append(realmsTouched, st.RealmID)
+		}
+		emit(SimEvent{Kind: "ruin", Major: true, X: st.X, Y: st.Y,
+			Text: fmt.Sprintf("dragonfire takes %s — the hall of House %s lies in ruins", st.Name, s.house[i])})
+	}
+	for j := len(doomed) - 1; j >= 0; j-- {
+		s.removeSeat(doomed[j])
+	}
+	for _, id := range realmsTouched {
+		s.maybeDissolve(id, emit)
+	}
+	s.recomputeLairNoted()
+	return true
+}
+
+// stepFoundings lets a lucky realm raise a new hall on calm ground
+// inside its own territory — a ruin of the slice is resettled first
+// (the old name returns under a new house), otherwise the best fresh
+// site: river-adjacent founds a Tributary, open land an Outhold.
+func (s *Sim) stepFoundings(emit func(SimEvent)) bool {
+	if len(s.W.Realms) == 0 {
+		return false
+	}
+	var winners []int64
+	for _, r := range s.W.Realms {
+		if s.rng.Float64() < foundChance {
+			winners = append(winners, r.ID)
+		}
+	}
+	if len(winners) == 0 {
+		return false
+	}
+	owner := make(map[[2]int64]int64, len(s.W.Territory))
+	for _, tc := range s.W.Territory {
+		owner[[2]int64{tc.X, tc.Y}] = tc.RealmID
+	}
+	founded := false
+	for _, realmID := range winners {
+		if s.foundSeat(realmID, owner, emit) {
+			founded = true
+		}
+	}
+	return founded
+}
+
+// sitePressure is the static raid exposure of a cell (activity-scaled).
+func (s *Sim) sitePressure(x, y int64) float64 {
+	var p float64
+	for j, l := range s.lairs {
+		if c := lairPressureAt(l, x, y, s.activity[j]); c > p {
+			p = c
+		}
+	}
+	return p
+}
+
+// clearOfSeats reports whether (x, y) keeps seatMinSep Chebyshev
+// distance from every living hall and every ruin.
+func (s *Sim) clearOfSeats(x, y int64) bool {
+	cheb := func(ax, ay int64) int64 {
+		dx, dy := x-ax, y-ay
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		return max(dx, dy)
+	}
+	for _, st := range s.W.Seats {
+		if cheb(st.X, st.Y) < seatMinSep {
+			return false
+		}
+	}
+	for _, r := range s.ruins {
+		if cheb(r.X, r.Y) < seatMinSep {
+			return false
+		}
+	}
+	return true
+}
+
+// foundSeat raises one hall for the realm, preferring its oldest
+// unsettled ruin, then the best fresh site in its territory (scored:
+// river-adjacent +2, cradle/agraria +1; ties to scan order).
+func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit func(SimEvent)) bool {
+	nearRiver := func(x, y int64) bool {
+		if s.riverAt[[2]int64{x, y}] {
+			return true
+		}
+		for _, d := range dirs8 {
+			if s.riverAt[[2]int64{x + int64(d[0]), y + int64(d[1])}] {
+				return true
+			}
+		}
+		return false
+	}
+
+	// A ruin of the slice, inside the realm's territory, calm enough.
+	for ri, ruin := range s.ruins {
+		if owner[[2]int64{ruin.X, ruin.Y}] != realmID || s.sitePressure(ruin.X, ruin.Y) > foundCalmPressure {
+			continue
+		}
+		s.ruins = append(s.ruins[:ri], s.ruins[ri+1:]...)
+		s.raiseHall(realmID, ruin.X, ruin.Y, ruin.Name, nearRiver(ruin.X, ruin.Y), true, emit)
+		return true
+	}
+
+	bestScore := -1
+	var bx, by int64
+	bestRiver := false
+	for _, rc := range s.W.Regions {
+		switch rc.RegionID {
+		case RegionCradle, RegionForest, RegionAgraria, RegionDoab:
+		default:
+			continue
+		}
+		p := [2]int64{rc.X, rc.Y}
+		if owner[p] != realmID || s.riverAt[p] || !s.clearOfSeats(rc.X, rc.Y) {
+			continue
+		}
+		if s.sitePressure(rc.X, rc.Y) > foundCalmPressure {
+			continue
+		}
+		score := 0
+		river := nearRiver(rc.X, rc.Y)
+		if river {
+			score += 2
+		}
+		if rc.RegionID == RegionCradle || rc.RegionID == RegionAgraria {
+			score++
+		}
+		if score > bestScore {
+			bestScore, bx, by, bestRiver = score, rc.X, rc.Y, river
+		}
+	}
+	if bestScore < 0 {
+		return false
+	}
+	s.raiseHall(realmID, bx, by, generateName(nameSeedForCell(s.W.Seed, bx, by)), bestRiver, false, emit)
+	return true
+}
+
+// raiseHall appends the new seat with all its parallel state and
+// flips its map cell to the seat tier.
+func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver, resettled bool, emit func(SimEvent)) {
+	tier := RegionOuthold
+	if onRiver {
+		tier = RegionSeat
+	}
+	s.setRegion(x, y, tier)
+
+	pressure := s.sitePressure(x, y)
+	base := -1.0
+	allegiance := 0.0
+	if s.capitalIdx >= 0 {
+		if L := s.capDist[y][x]; L >= 0 {
+			base = allegianceBase(L, tier)
+			allegiance = min(max(base-pressureAllegiancePenalty*pressure, 0), 1)
+		}
+	}
+	s.W.Seats = append(s.W.Seats, NamedSeat{
+		X: x, Y: y, Tier: tier, Name: name,
+		Pressure: pressure, RealmID: realmID, Allegiance: allegiance,
+	})
+	s.base = append(s.base, base)
+	s.temperament = append(s.temperament, 0)
+	s.stance = append(s.stance, AllegianceStance(allegiance))
+	s.lowStreak = append(s.lowStreak, 0)
+	s.highStreak = append(s.highStreak, 0)
+	s.ruinStreak = append(s.ruinStreak, 0)
+	s.house = append(s.house, generateName(s.rng.Int63()))
+	s.houseSince = append(s.houseSince, s.Year)
+	s.reignEnd = append(s.reignEnd, s.Year+reignMinYears+s.rng.Intn(reignSpanYears))
+	s.recomputeLairNoted()
+
+	var realmName string
+	for _, r := range s.W.Realms {
+		if r.ID == realmID {
+			realmName = r.Name
+		}
+	}
+	if resettled {
+		emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
+			Text: fmt.Sprintf("%s is raised again from its ruins by the realm of %s, under House %s",
+				name, realmName, s.house[len(s.house)-1])})
+		return
+	}
+	emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
+		Text: fmt.Sprintf("a new hall rises — %s, of the realm of %s", name, realmName)})
 }
 
 // stanceRank orders the stance vocabulary from least to most loyal.

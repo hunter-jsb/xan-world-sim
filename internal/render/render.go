@@ -146,6 +146,10 @@ var kinds = map[string]kindSpec{
 	// distinct from earthier tiers since Reaches are exceptional & rare
 	"reach": {glyph: 'R', label: "reach", tierLabel: "Reach",
 		shading: boldShade(200, 200, [5]string{"54", "91", "127", "163", "207"})},
+	// ruin — ash-gray remains of a sacked hall; deliberately drab next
+	// to the living seat tiers, a scar where gold used to be
+	"ruin": {glyph: 'h', label: "ruined hall", featureLabel: "ruined hall",
+		shading: shade(100, 50, [5]string{"240", "243", "245", "247", "249"})},
 	// pass — yellow-stone, a saddle through the mountain ridge; bright
 	// against the surrounding gray mountains so passes stand out
 	"pass": {glyph: 'V', label: "mountain pass", featureLabel: "mountain pass",

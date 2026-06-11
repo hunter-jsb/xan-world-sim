@@ -103,7 +103,15 @@ type model struct {
 	simSpeed        int // index into simSpeeds
 	preSimSeats     []db.GetSeatsInBoundsRow
 	preSimTerritory []db.GetTerritoryInBoundsRow
+	preSimCells     []db.GetCellsInBoundsRow
+	preSimFeatures  []db.GetNamedFeaturesInBoundsRow
 	preSimPolitical bool
+
+	// Rise-and-fall bookkeeping: how many of the sim's cell patches
+	// are already in m.data.cells, and the ruin count the features
+	// list was last built against.
+	simPatchesApplied int
+	simRuinCount      int
 
 	minX, minY, maxX, maxY int64
 }
@@ -498,9 +506,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// in-flight scrub) landed mid-simulation. It's for this
 			// same (seed, kya) — the staleness check above proved it —
 			// so refresh the deep-time stash and re-overlay the sim's
-			// politics; expeditions and popups stay valid.
-			m.preSimSeats = m.data.seats
-			m.preSimTerritory = m.data.territory
+			// politics (all cell patches replay); expeditions and
+			// popups stay valid.
+			m.stashDeepTime()
 			m.applySimData(true)
 		} else {
 			// World changed — terrain costs shift, so a stale expedition

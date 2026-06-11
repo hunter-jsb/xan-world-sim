@@ -12,6 +12,8 @@ func travelCostFor(id int64) int {
 		return 3
 	case RegionCradle, RegionForest, RegionTundra, RegionAgraria, RegionAgrariaUpland:
 		return 4
+	case RegionRuin:
+		return 4 // broken walls on open ground — walkable, nothing more
 	case RegionFoothill:
 		return 5
 	case RegionDoab:
