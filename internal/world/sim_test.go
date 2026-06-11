@@ -94,14 +94,14 @@ func TestSim_EventsFire(t *testing.T) {
 				if !e.Major {
 					t.Errorf("year %d: %s event not Major", e.Year, e.Kind)
 				}
-			case "stance", "dragon":
+			case "stance", "lair":
 				if e.Major {
 					t.Errorf("year %d: %s event marked Major", e.Year, e.Kind)
 				}
 			}
 		}
 	}
-	for _, kind := range []string{"dragon", "stance", "secede", "swear"} {
+	for _, kind := range []string{"lair", "stance", "secede", "swear"} {
 		if counts[kind] == 0 {
 			t.Errorf("no %q events in a millennium — dynamics too quiet (counts: %v)", kind, counts)
 		}
@@ -123,7 +123,7 @@ func TestSim_NoCrownAge(t *testing.T) {
 	}
 	for y := 0; y < 300; y++ {
 		for _, e := range s.StepYear() {
-			if e.Kind != "dragon" {
+			if e.Kind != "lair" {
 				t.Errorf("year %d: %s event in a crownless age: %s", e.Year, e.Kind, e.Text)
 			}
 		}
@@ -134,6 +134,55 @@ func TestSim_NoCrownAge(t *testing.T) {
 		}
 	}
 	checkPolity(t, *s.W)
+}
+
+// TestSim_PressureMatchesGenAtRest pins the gen↔sim identity: with
+// every lair at activity 1, the sim's pressure formula must reproduce
+// applyDragonPressure exactly — the two can never drift apart.
+func TestSim_PressureMatchesGenAtRest(t *testing.T) {
+	for _, seed := range []int64{1, 7, 42} {
+		s := NewSim(seed, 0)
+		genPressure := make([]float64, len(s.W.Seats))
+		for i, st := range s.W.Seats {
+			genPressure[i] = st.Pressure
+		}
+		s.recomputePressure() // activities untouched, all 1
+		for i, st := range s.W.Seats {
+			if st.Pressure != genPressure[i] {
+				t.Errorf("seed %d seat %q: sim pressure %g != gen %g",
+					seed, st.Name, st.Pressure, genPressure[i])
+			}
+		}
+	}
+}
+
+// TestSim_AllLairTiersSpeak: over a millennium the chronicle must hear
+// from every tier of the dragon family, not just the dens.
+func TestSim_AllLairTiersSpeak(t *testing.T) {
+	heard := map[string]bool{}
+	for _, seed := range []int64{1, 42} {
+		s := NewSim(seed, 0)
+		for y := 0; y < 1000; y++ {
+			for _, e := range s.StepYear() {
+				if e.Kind != "lair" {
+					continue
+				}
+				switch {
+				case strings.Contains(e.Text, "dragon"):
+					heard["dragon"] = true
+				case strings.Contains(e.Text, "drake"):
+					heard["drakes"] = true
+				case strings.Contains(e.Text, "wyvern") || strings.Contains(e.Text, "rookery"):
+					heard["wyverns"] = true
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"dragon", "drakes", "wyverns"} {
+		if !heard[kind] {
+			t.Errorf("no %s temper events in two millennia (heard: %v)", kind, heard)
+		}
+	}
 }
 
 func TestStickyStance(t *testing.T) {

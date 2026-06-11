@@ -539,7 +539,11 @@ func (m *model) buildLookups() {
 	for _, t := range m.data.territory {
 		m.territoryAt[[2]int64{t.X, t.Y}] = t
 	}
-	m.dangerMap = buildDangerMap(m.data.features)
+	var activityAt func(x, y int64) float64
+	if m.simMode && m.sim != nil {
+		activityAt = m.sim.LairActivity
+	}
+	m.dangerMap = buildDangerMap(m.data.features, activityAt)
 	m.pois = buildPOIs(m.data)
 }
 
@@ -1114,7 +1118,11 @@ func (m *model) overlayPath() []render.PathCell {
 // buildDangerMap pre-computes per-cell dragon danger scores from all lair
 // features. Dens radiate danger within radius 12 (scale ×3), nests 8 (×2),
 // rookeries 6 (×1). Overlapping zones take the maximum score.
-func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow) map[[2]int64]int {
+//
+// activityAt scales each lair's danger by its current raid activity
+// (sim mode: routes get costlier under a rampant dragon and cheaper
+// past a dormant one); nil means the static generation-time level.
+func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow, activityAt func(x, y int64) float64) map[[2]int64]int {
 	danger := make(map[[2]int64]int)
 	for _, f := range features {
 		var radius, scale int
@@ -1127,6 +1135,10 @@ func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow) map[[2]int64]int 
 			radius, scale = 6, 1
 		default:
 			continue
+		}
+		activity := 1.0
+		if activityAt != nil {
+			activity = activityAt(f.X, f.Y)
 		}
 		for dy := -radius; dy <= radius; dy++ {
 			for dx := -radius; dx <= radius; dx++ {
@@ -1141,7 +1153,7 @@ func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow) map[[2]int64]int 
 				} else if ady > cheb {
 					cheb = ady
 				}
-				d := (radius - int(cheb)) * scale
+				d := int(float64((radius-int(cheb))*scale)*activity + 0.5)
 				if d <= 0 {
 					continue
 				}

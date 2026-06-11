@@ -26,13 +26,17 @@ import (
 // years, a defection or swearing once or twice a century, and each
 // dragon changing temper a few times per millennium.
 const (
-	// activityWalkSigma drives each den's raid-activity random walk
-	// (reflected into [0, activityMax], starting at 1 = the static
-	// generation-time level). A walk step of 0.10/yr crosses the 0.5
-	// gap from normal to rampant in ~25 years on average — dragon
-	// tempers turn on generational timescales.
-	activityWalkSigma = 0.10
-	activityMax       = 2.0
+	// Each lair's raid activity does a random walk (reflected into
+	// [0, activityMax], starting at 1 = the static generation-time
+	// level). A dragon's walk step of 0.10/yr crosses the 0.5 gap from
+	// normal to rampant in ~25 years on average — tempers turn on
+	// generational timescales. Lesser tiers are steadier: a drake
+	// swarm waxes with broods, and a colonial rookery averages out its
+	// individuals' moods.
+	dragonWalkSigma = 0.10
+	drakeWalkSigma  = 0.08
+	wyvernWalkSigma = 0.06
+	activityMax     = 2.0
 
 	// Rampant/dormant bands carry hysteresis so a den hovering at the
 	// boundary doesn't flap between tempers every other year.
@@ -77,13 +81,36 @@ const sliceYears = 1000
 
 // SimEvent is one entry in a slice's chronicle. Major events are the
 // ones the TUI interrupts for (membership and epoch changes); minor
-// ones (stances, dragon tempers) just stream past.
+// ones (stances, lair tempers) just stream past.
 type SimEvent struct {
 	Year  int
-	Kind  string // "stance", "secede", "swear", "dissolve", "dragon", "epoch"
+	Kind  string // "stance", "secede", "swear", "dissolve", "lair", "epoch"
 	Text  string
 	X, Y  int64
 	Major bool
+}
+
+// lairTemperText holds each lair kind's four temper-transition lines:
+// rampant-enter, dormant-enter, rampant-exit, dormant-exit.
+var lairTemperText = map[string][4]string{
+	"dragon": {
+		"the dragon of %s stirs — raid-fires on the horizon",
+		"the dragon of %s falls dormant — the skies clear",
+		"the raids out of %s subside",
+		"wings over %s again",
+	},
+	"drakes": {
+		"the drakes of %s swarm the lowlands",
+		"the drakes of %s go to ground",
+		"the drake-swarms around %s thin",
+		"drakes prowl from %s again",
+	},
+	"wyverns": {
+		"the wyverns of %s wheel in war-flocks",
+		"the rookery at %s falls silent",
+		"the war-flocks over %s scatter",
+		"wyverns ride the winds from %s again",
+	},
 }
 
 // Sim is a running simulation over one frozen slice of deep time.
@@ -103,11 +130,25 @@ type Sim struct {
 	lowStreak   []int // consecutive years in the autonomous band (crown seats)
 	highStreak  []int // consecutive years above swearThreshold (independents)
 
-	// Per-den state, indexed like W.Dens.
-	activity []float64 // raid-activity multiplier in [0, activityMax]
-	denState []int     // 0 normal, 1 rampant, -1 dormant
+	// Per-lair state, indexed like lairs (all three tiers flattened).
+	lairs     []lairSite
+	activity  []float64 // raid-activity multiplier in [0, activityMax]
+	lairState []int     // 0 normal, 1 rampant, -1 dormant
+	lairNoted []bool    // some seat lies in raid range — tempers make the chronicle
 
 	nextRealmID int64
+}
+
+// LairActivity reports the current activity multiplier of the lair at
+// (x, y), or 1 if no lair is there — the TUI scales the expedition
+// danger map by this, so route costs shift with the times.
+func (s *Sim) LairActivity(x, y int64) float64 {
+	for i, l := range s.lairs {
+		if l.X == x && l.Y == y {
+			return s.activity[i]
+		}
+	}
+	return 1
 }
 
 // NewSim generates the slice's world and prepares it for stepping.
@@ -165,10 +206,18 @@ func NewSim(seed int64, kya int) *Sim {
 		}
 	}
 
-	s.activity = make([]float64, len(w.Dens))
-	s.denState = make([]int, len(w.Dens))
-	for i := range s.activity {
+	s.lairs = w.lairSites()
+	s.activity = make([]float64, len(s.lairs))
+	s.lairState = make([]int, len(s.lairs))
+	s.lairNoted = make([]bool, len(s.lairs))
+	for i, l := range s.lairs {
 		s.activity[i] = 1
+		for _, st := range w.Seats {
+			if lairPressureAt(l, st.X, st.Y, 1) > 0 {
+				s.lairNoted[i] = true
+				break
+			}
+		}
 	}
 	return s
 }
@@ -185,7 +234,7 @@ func (s *Sim) StepYear() []SimEvent {
 		events = append(events, e)
 	}
 
-	s.stepDragons(emit)
+	s.stepLairs(emit)
 	s.stepAllegiance(emit)
 	changed := s.stepMembership(emit)
 	if changed {
@@ -208,12 +257,27 @@ func (s *Sim) StepYear() []SimEvent {
 	return events
 }
 
-// stepDragons walks each den's raid activity and recomputes every
-// seat's pressure as the strongest activity-weighted raid falloff. At
-// activity 1 this reproduces applyDragonPressure exactly.
-func (s *Sim) stepDragons(emit func(SimEvent)) {
-	for i := range s.activity {
-		a := s.activity[i] + s.rng.NormFloat64()*activityWalkSigma
+// lairWalkSigma is the per-tier volatility of a lair's activity walk.
+func lairWalkSigma(kind string) float64 {
+	switch kind {
+	case "dragon":
+		return dragonWalkSigma
+	case "drakes":
+		return drakeWalkSigma
+	default: // wyverns
+		return wyvernWalkSigma
+	}
+}
+
+// stepLairs walks every lair's raid activity and recomputes every
+// seat's pressure as the strongest activity-weighted raid falloff
+// (lairPressureAt — at activity 1 this reproduces applyDragonPressure
+// exactly). Temper changes enter the chronicle only for lairs with a
+// seat in raid range: the courts record what reaches their walls, the
+// rest is weather.
+func (s *Sim) stepLairs(emit func(SimEvent)) {
+	for i, l := range s.lairs {
+		a := s.activity[i] + s.rng.NormFloat64()*lairWalkSigma(l.Kind)
 		if a < 0 {
 			a = -a // reflect at the floor: a sleeping dragon still dreams
 		}
@@ -222,43 +286,43 @@ func (s *Sim) stepDragons(emit func(SimEvent)) {
 		}
 		s.activity[i] = a
 
-		d := s.W.Dens[i]
+		temper := -1
 		switch {
-		case s.denState[i] != 1 && a >= rampantEnter:
-			s.denState[i] = 1
-			emit(SimEvent{Kind: "dragon", X: d.X, Y: d.Y,
-				Text: fmt.Sprintf("the dragon of %s stirs — raid-fires on the horizon", d.Name)})
-		case s.denState[i] != -1 && a <= dormantEnter:
-			s.denState[i] = -1
-			emit(SimEvent{Kind: "dragon", X: d.X, Y: d.Y,
-				Text: fmt.Sprintf("the dragon of %s falls dormant — the skies clear", d.Name)})
-		case s.denState[i] == 1 && a < rampantExit:
-			s.denState[i] = 0
-			emit(SimEvent{Kind: "dragon", X: d.X, Y: d.Y,
-				Text: fmt.Sprintf("the raids out of %s subside", d.Name)})
-		case s.denState[i] == -1 && a > dormantExit:
-			s.denState[i] = 0
-			emit(SimEvent{Kind: "dragon", X: d.X, Y: d.Y,
-				Text: fmt.Sprintf("wings over %s again", d.Name)})
+		case s.lairState[i] != 1 && a >= rampantEnter:
+			s.lairState[i] = 1
+			temper = 0
+		case s.lairState[i] != -1 && a <= dormantEnter:
+			s.lairState[i] = -1
+			temper = 1
+		case s.lairState[i] == 1 && a < rampantExit:
+			s.lairState[i] = 0
+			temper = 2
+		case s.lairState[i] == -1 && a > dormantExit:
+			s.lairState[i] = 0
+			temper = 3
+		}
+		// Courts chronicle every dragon mood, but for lesser lairs only
+		// the threat's arrival (rampant/dormant onset) is news — its
+		// passing is taken for granted.
+		if temper >= 0 && s.lairNoted[i] && (l.Kind == "dragon" || temper < 2) {
+			emit(SimEvent{Kind: "lair", X: l.X, Y: l.Y,
+				Text: fmt.Sprintf(lairTemperText[l.Kind][temper], l.Name)})
 		}
 	}
 
+	s.recomputePressure()
+}
+
+// recomputePressure rescores every seat against the current lair
+// activities. With all activities at 1 this reproduces the
+// generator's applyDragonPressure exactly (pinned by test).
+func (s *Sim) recomputePressure() {
 	for i := range s.W.Seats {
 		st := &s.W.Seats[i]
 		var p float64
-		for j, d := range s.W.Dens {
-			dx := int(st.X - d.X)
-			if dx < 0 {
-				dx = -dx
-			}
-			dy := int(st.Y - d.Y)
-			if dy < 0 {
-				dy = -dy
-			}
-			if cheb := max(dx, dy); cheb < dragonRaidRadius {
-				if c := float64(dragonRaidRadius-cheb) * s.activity[j]; c > p {
-					p = c
-				}
+		for j, l := range s.lairs {
+			if c := lairPressureAt(l, st.X, st.Y, s.activity[j]); c > p {
+				p = c
 			}
 		}
 		st.Pressure = p

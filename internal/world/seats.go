@@ -363,39 +363,76 @@ func (w *World) placeOutholds() {
 	}
 }
 
-// applyDragonPressure computes per-seat exposure to dragon raids.
-// Lore: "Northern kingdoms — those nestled up against the Mountain
-// Barrier — live under constant dragon pressure... Risk falls off with
-// distance from the mountains." Computed as
-//
-//	pressure = max(0, dragonRaidRadius - chebyshev_distance_to_nearest_den)
-//
-// at our cell size, dragonRaidRadius=12 cells ≈ 600km — the scale at
-// which a dragon's territory tapers off into safe heartland. The
-// year-by-year simulation (sim.go) recomputes the same falloff with a
-// per-den activity weight, so the constant lives at package level.
-const dragonRaidRadius = 12
+// lairSite is one lair's political footprint: where it is, how far its
+// raids project (radius, in cells), and how heavily a court must weigh
+// them relative to a dragon (weight). Radii and the 3:2:1 weight ratio
+// are the same tiering the expedition danger map uses — dragons are
+// the apex (12 cells ≈ 600km raid range), drakes the everyday menace
+// (8), wyverns numerous skirmishers (6).
+type lairSite struct {
+	X, Y   int64
+	Name   string
+	Kind   string // "dragon", "drakes", "wyverns" — the event noun
+	Radius int
+	Weight float64
+}
 
+// lairSites flattens all three lair tiers in deterministic order
+// (dens, nests, rookeries — each already in placement order).
+func (w *World) lairSites() []lairSite {
+	sites := make([]lairSite, 0, len(w.Dens)+len(w.Nests)+len(w.Rookeries))
+	for _, d := range w.Dens {
+		sites = append(sites, lairSite{d.X, d.Y, d.Name, "dragon", 12, 1})
+	}
+	for _, n := range w.Nests {
+		sites = append(sites, lairSite{n.X, n.Y, n.Name, "drakes", 8, 2.0 / 3})
+	}
+	for _, r := range w.Rookeries {
+		sites = append(sites, lairSite{r.X, r.Y, r.Name, "wyverns", 6, 1.0 / 3})
+	}
+	return sites
+}
+
+// lairPressureAt is the raid exposure one lair projects onto a cell at
+// the given activity level (1 = the generation-time norm): linear
+// falloff over the lair's radius, scaled by tier weight and activity.
+func lairPressureAt(l lairSite, x, y int64, activity float64) float64 {
+	dx := int(x - l.X)
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := int(y - l.Y)
+	if dy < 0 {
+		dy = -dy
+	}
+	if cheb := max(dx, dy); cheb < l.Radius {
+		return float64(l.Radius-cheb) * l.Weight * activity
+	}
+	return 0
+}
+
+// applyDragonPressure computes per-seat exposure to dragon-family
+// raids. Lore: "Northern kingdoms — those nestled up against the
+// Mountain Barrier — live under constant dragon pressure... Risk falls
+// off with distance from the mountains." Each seat takes the strongest
+// single threat over all lairs (a court plans against its worst
+// neighbor, not the sum of all skies):
+//
+//	pressure = max over lairs of (radius - chebyshev) × tier weight
+//
+// The year-by-year simulation (sim.go) recomputes the same formula
+// with per-lair activity, so at activity 1 the two are identical.
 func (w *World) applyDragonPressure() {
-	if len(w.Dens) == 0 || len(w.Seats) == 0 {
+	if len(w.Seats) == 0 {
 		return
 	}
+	sites := w.lairSites()
 	for i := range w.Seats {
 		s := &w.Seats[i]
-		minD := dragonRaidRadius
-		for _, d := range w.Dens {
-			dx := int(s.X - d.X)
-			if dx < 0 {
-				dx = -dx
+		for _, l := range sites {
+			if p := lairPressureAt(l, s.X, s.Y, 1); p > s.Pressure {
+				s.Pressure = p
 			}
-			dy := int(s.Y - d.Y)
-			if dy < 0 {
-				dy = -dy
-			}
-			minD = min(minD, max(dx, dy))
-		}
-		if p := dragonRaidRadius - minD; p > 0 {
-			s.Pressure = float64(p)
 		}
 	}
 }
