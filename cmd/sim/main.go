@@ -72,6 +72,9 @@ type model struct {
 	// pois is every named place in (y, x) hop order — w/b targets.
 	pois []poi
 
+	// helpSel is the last help topic read — the menu reopens there.
+	helpSel int
+
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
@@ -179,6 +182,8 @@ const (
 	popJumpXY    popupAction = "jump-xy"    // jump cursor to the popup's cell
 	popJumpEvent popupAction = "jump-event" // arg = index into m.sim.Log
 	popExpChoice popupAction = "exp-choice" // arg = index into the pending hazard's choices
+	popHelpTopic popupAction = "help-topic" // arg = index into helpTopics
+	popHelpMenu  popupAction = "help-menu"  // back to the topic list
 )
 
 type popupOption struct {
@@ -953,6 +958,11 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 
 	case popExpChoice:
 		m.resolveExpChoice(opt.arg)
+
+	case popHelpTopic:
+		m.openHelpTopic(opt.arg)
+	case popHelpMenu:
+		m.openHelpPopup()
 	}
 	m.mapStr = m.buildMap()
 	return m, nil
@@ -1048,23 +1058,6 @@ func (m *model) openCellPopup() {
 	m.popup = &popupState{
 		title: title, body: body, opts: opts,
 		cellX: m.curX, cellY: m.curY,
-	}
-	m.mapStr = m.buildMap()
-}
-
-// openHelpPopup shows the glyph legend and the key reference.
-func (m *model) openHelpPopup() {
-	body := strings.Split(m.legend, "\n")
-	body = append(body, "",
-		dimStyle.Render("hjkl / arrows cursor   w / b next/prev place   o list places"),
-		dimStyle.Render("enter inspect cell   s expedition to cursor   p political map"),
-		dimStyle.Render("] / [ ±5ka   } / { (or shift+arrows) ±25ka   e now/LGM   r reroll"),
-		dimStyle.Render("S simulate this slice — politics run year by year (space pause, < > speed, L chronicle)"),
-		dimStyle.Render("H help   q quit"))
-	m.popup = &popupState{
-		title: "the cradle — legend & keys",
-		body:  body,
-		opts:  []popupOption{{label: "Close", action: popClose}},
 	}
 	m.mapStr = m.buildMap()
 }
