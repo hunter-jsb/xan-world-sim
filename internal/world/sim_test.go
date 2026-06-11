@@ -96,11 +96,11 @@ func TestSim_EventsFire(t *testing.T) {
 				epoch = &ev
 			}
 			switch e.Kind {
-			case "secede", "swear", "dissolve", "epoch", "ruin", "founding":
+			case "secede", "swear", "dissolve", "epoch", "ruin", "founding", "war", "capture", "peace":
 				if !e.Major {
 					t.Errorf("year %d: %s event not Major", e.Year, e.Kind)
 				}
-			case "stance", "lair":
+			case "stance", "lair", "raid":
 				if e.Major {
 					t.Errorf("year %d: %s event marked Major", e.Year, e.Kind)
 				}
@@ -142,6 +142,33 @@ func TestSim_NoCrownAge(t *testing.T) {
 	for _, st := range s.W.Seats {
 		if st.Allegiance != 0 {
 			t.Errorf("seat %q allegiance %g in a crownless age, want 0", st.Name, st.Allegiance)
+		}
+	}
+	checkPolity(t, *s.W)
+}
+
+// TestSim_Wars: grievance must become war, war must capture and must
+// end. Every war that began has ended (or still stands at the close);
+// no standing war references a dead realm.
+func TestSim_Wars(t *testing.T) {
+	s := NewSim(42, 0)
+	counts := map[string]int{}
+	for y := 0; y < 3000; y++ {
+		for _, e := range s.StepYear() {
+			counts[e.Kind]++
+		}
+	}
+	for _, kind := range []string{"war", "capture", "peace", "raid"} {
+		if counts[kind] == 0 {
+			t.Errorf("no %q events in three millennia (counts: %v)", kind, counts)
+		}
+	}
+	if got, want := counts["peace"]+len(s.Wars()), counts["war"]; got != want {
+		t.Errorf("wars don't reconcile: %d declared, %d ended + %d standing", want, counts["peace"], len(s.Wars()))
+	}
+	for _, w := range s.Wars() {
+		if s.realmName(w.A) == "" || s.realmName(w.B) == "" {
+			t.Errorf("standing war references a dead realm (%d vs %d)", w.A, w.B)
 		}
 	}
 	checkPolity(t, *s.W)

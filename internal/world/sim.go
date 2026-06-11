@@ -102,6 +102,29 @@ const (
 	foundCalmPressure = 2.0
 	seatMinSep        = 4
 
+	// Wars: grievance is heat between two realms — secessions and
+	// captures pour it in, shared borders add slow friction, time
+	// bleeds it off (≈2%/yr). Each bordered pair risks war in
+	// proportion to its grievance; the stronger side declares (wars
+	// start when the strong think they'll win). The score drifts with
+	// relative strength plus fortune; at ±captureScore a border hall
+	// changes hands by force. Wars end by exhaustion (maxWarYears) or,
+	// often, after a capture. Only crowned ages fight wars — ice-age
+	// clan raids are below this layer's resolution.
+	grievanceSecede    = 0.5
+	grievanceCapture   = 0.4
+	grievanceDecay     = 0.98
+	borderFriction     = 0.0008
+	warChance          = 0.01 // × grievance, per candidate pair per year
+	warMarchGrievance  = 0.15 // grievance that carries armies across the wilds
+	warDriftK          = 0.06
+	warNoise           = 0.08
+	captureScore       = 1.0
+	maxWarYears        = 30
+	warEndAfterCapture = 0.6
+	raidPeriod         = 4
+	raidDoubt          = 0.02
+
 	// Membership changes demand sustained conviction, not a bad year.
 	// Both thresholds mirror crownThreshold — the same boundary
 	// formRealms partitions by at generation — offset by a hysteresis
@@ -198,7 +221,64 @@ type Sim struct {
 	lairState []int     // 0 normal, 1 rampant, -1 dormant
 	lairNoted []bool    // some seat lies in raid range — tempers make the chronicle
 
+	// Wars: active conflicts, the standing grievances between realm
+	// pairs (keyed by sorted ID pair), and the current border-contact
+	// counts derived from territory.
+	wars      []war
+	grievance map[[2]int64]float64
+	borders   map[[2]int64]int
+
 	nextRealmID int64
+}
+
+// war is one running conflict; Score > 0 favors the declarer A.
+type war struct {
+	A, B  int64 // realm IDs; A declared
+	Start int
+	Score float64
+}
+
+// Wars exposes the active conflicts (for the TUI's realm dossiers).
+func (s *Sim) Wars() []war { return s.wars }
+
+// RealmDisplayName names a realm for the TUI ("" if it fell).
+func (s *Sim) RealmDisplayName(id int64) string { return s.realmName(id) }
+
+// AtWar reports whether the two realms are currently fighting.
+func (s *Sim) AtWar(a, b int64) bool {
+	for _, w := range s.wars {
+		if (w.A == a && w.B == b) || (w.A == b && w.B == a) {
+			return true
+		}
+	}
+	return false
+}
+
+// pairKey orders two realm IDs into a canonical map key.
+func pairKey(a, b int64) [2]int64 {
+	if a < b {
+		return [2]int64{a, b}
+	}
+	return [2]int64{b, a}
+}
+
+// realmName returns the name of the realm with the given ID.
+func (s *Sim) realmName(id int64) string {
+	for _, r := range s.W.Realms {
+		if r.ID == id {
+			return r.Name
+		}
+	}
+	return ""
+}
+
+// realmTitle is the realm's styled name for event text: the crown is
+// "the crown of X", everyone else "the league of X".
+func (s *Sim) realmTitle(id int64) string {
+	if id == s.crownID {
+		return "the crown of " + s.realmName(id)
+	}
+	return "the league of " + s.realmName(id)
 }
 
 // LairActivity reports the current activity multiplier of the lair at
@@ -311,6 +391,8 @@ func NewSim(seed int64, kya int) *Sim {
 	for _, r := range w.Rivers {
 		s.riverAt[[2]int64{r.X, r.Y}] = true
 	}
+	s.grievance = make(map[[2]int64]float64)
+	s.recomputeBorders()
 
 	// Heritage lines: each hall's founding house is as deterministic as
 	// its name (same cell coordinates, salted stream); the sitting
@@ -372,9 +454,13 @@ func (s *Sim) StepYear() []SimEvent {
 	if s.stepFoundings(emit) {
 		changed = true
 	}
+	if s.stepWars(emit) {
+		changed = true
+	}
 	if changed {
 		s.W.Territory = s.W.Territory[:0]
 		s.W.claimTerritory()
+		s.recomputeBorders()
 	}
 
 	if s.Year == sliceYears {
@@ -610,14 +696,9 @@ func (s *Sim) secede(i int, emit func(SimEvent)) {
 
 	if bestRealm != 0 {
 		st.RealmID = bestRealm
-		var name string
-		for _, r := range s.W.Realms {
-			if r.ID == bestRealm {
-				name = r.Name
-			}
-		}
+		s.grievance[pairKey(bestRealm, s.crownID)] += grievanceSecede
 		emit(SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
-			Text: fmt.Sprintf("%s renounces the crown and joins the league of %s", st.Name, name)})
+			Text: fmt.Sprintf("%s renounces the crown and joins the league of %s", st.Name, s.realmName(bestRealm))})
 		return
 	}
 
@@ -628,14 +709,9 @@ func (s *Sim) secede(i int, emit func(SimEvent)) {
 		SeatX: st.X,
 		SeatY: st.Y,
 	})
-	var crownName string
-	for _, r := range s.W.Realms {
-		if r.ID == s.crownID {
-			crownName = r.Name
-		}
-	}
 	s.lineage[s.nextRealmID] = fmt.Sprintf("sundered from the crown of %s in year %d, under House %s",
-		crownName, s.Year, s.house[i])
+		s.realmName(s.crownID), s.Year, s.house[i])
+	s.grievance[pairKey(s.nextRealmID, s.crownID)] += grievanceSecede
 	s.nextRealmID++
 	emit(SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
 		Text: fmt.Sprintf("%s renounces the crown and stands alone — the league of %s", st.Name, st.Name)})
@@ -647,15 +723,8 @@ func (s *Sim) swear(i int, emit func(SimEvent)) {
 	st := &s.W.Seats[i]
 	oldRealm := st.RealmID
 	st.RealmID = s.crownID
-
-	var crownName string
-	for _, r := range s.W.Realms {
-		if r.ID == s.crownID {
-			crownName = r.Name
-		}
-	}
 	emit(SimEvent{Kind: "swear", Major: true, X: st.X, Y: st.Y,
-		Text: fmt.Sprintf("%s swears to the crown of %s", st.Name, crownName)})
+		Text: fmt.Sprintf("%s swears to the crown of %s", st.Name, s.realmName(s.crownID))})
 
 	s.maybeDissolve(oldRealm, emit)
 }
@@ -920,20 +989,235 @@ func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver, resettl
 	s.reignEnd = append(s.reignEnd, s.Year+reignMinYears+s.rng.Intn(reignSpanYears))
 	s.recomputeLairNoted()
 
-	var realmName string
-	for _, r := range s.W.Realms {
-		if r.ID == realmID {
-			realmName = r.Name
-		}
-	}
 	if resettled {
 		emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
 			Text: fmt.Sprintf("%s is raised again from its ruins by the realm of %s, under House %s",
-				name, realmName, s.house[len(s.house)-1])})
+				name, s.realmName(realmID), s.house[len(s.house)-1])})
 		return
 	}
 	emit(SimEvent{Kind: "founding", Major: true, X: x, Y: y,
-		Text: fmt.Sprintf("a new hall rises — %s, of the realm of %s", name, realmName)})
+		Text: fmt.Sprintf("a new hall rises — %s, of the realm of %s", name, s.realmName(realmID))})
+}
+
+// recomputeBorders rebuilds the realm-pair contact counts from the
+// territory grid (E and S neighbors only, so each touching pair of
+// cells counts once).
+func (s *Sim) recomputeBorders() {
+	s.borders = make(map[[2]int64]int)
+	owner := make(map[[2]int64]int64, len(s.W.Territory))
+	for _, tc := range s.W.Territory {
+		owner[[2]int64{tc.X, tc.Y}] = tc.RealmID
+	}
+	for _, tc := range s.W.Territory {
+		for _, d := range [2][2]int64{{1, 0}, {0, 1}} {
+			if o := owner[[2]int64{tc.X + d[0], tc.Y + d[1]}]; o != 0 && o != tc.RealmID {
+				s.borders[pairKey(tc.RealmID, o)]++
+			}
+		}
+	}
+}
+
+// realmStrength weighs a realm's halls for war: every hall counts,
+// Marches count half again ("battle-hardened"), the capital double.
+func (s *Sim) realmStrength(id int64) float64 {
+	str := 0.0
+	for i := range s.W.Seats {
+		if s.W.Seats[i].RealmID != id {
+			continue
+		}
+		str++
+		if s.W.Seats[i].Tier == RegionMarch {
+			str += 0.5
+		}
+		if i == s.capitalIdx {
+			str++
+		}
+	}
+	return str
+}
+
+// frontSeat picks the defender's hall on the war's front — the one
+// nearest (Chebyshev) to any of the attacker's halls. skipCapital
+// protects the crown's seat from capture (raiders may still reach its
+// fields). Returns -1 if either side has no halls.
+func (s *Sim) frontSeat(defender, attacker int64, skipCapital bool) int {
+	best, bestD := -1, 1<<30
+	for i := range s.W.Seats {
+		if s.W.Seats[i].RealmID != defender || (skipCapital && i == s.capitalIdx) {
+			continue
+		}
+		for j := range s.W.Seats {
+			if s.W.Seats[j].RealmID != attacker {
+				continue
+			}
+			dx := int(s.W.Seats[i].X - s.W.Seats[j].X)
+			if dx < 0 {
+				dx = -dx
+			}
+			dy := int(s.W.Seats[i].Y - s.W.Seats[j].Y)
+			if dy < 0 {
+				dy = -dy
+			}
+			if d := max(dx, dy); d < bestD {
+				best, bestD = i, d
+			}
+		}
+	}
+	return best
+}
+
+// sortedPairs returns map keys in canonical (a, b) order — map
+// iteration is randomized and the war rolls must not be.
+func sortedPairs[V any](m map[[2]int64]V) [][2]int64 {
+	keys := make([][2]int64, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && (keys[j][0] < keys[j-1][0] ||
+			(keys[j][0] == keys[j-1][0] && keys[j][1] < keys[j-1][1])); j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+// stepWars runs the year's grievances, declarations, campaigns,
+// captures, and peaces. Returns whether any seat changed hands.
+func (s *Sim) stepWars(emit func(SimEvent)) bool {
+	if s.crownID == 0 {
+		return false // no crowned order to fight over
+	}
+
+	// Grievance bookkeeping: decay what stands, add border friction.
+	heat := make(map[[2]int64]bool, len(s.grievance)+len(s.borders))
+	for k := range s.grievance {
+		heat[k] = true
+	}
+	for k := range s.borders {
+		heat[k] = true
+	}
+	for _, k := range sortedPairs(heat) {
+		g := s.grievance[k] * grievanceDecay
+		if n := s.borders[k]; n > 0 {
+			g += borderFriction * min(float64(n)/10, 1)
+		}
+		if g < 0.01 {
+			delete(s.grievance, k)
+		} else {
+			s.grievance[k] = g
+		}
+	}
+
+	// Declarations: bordered pairs risk war in proportion to their
+	// grievance, and a strong grievance (≥ warMarchGrievance) carries
+	// armies across the wilds even without a shared border — the
+	// crown reconquers its lost halls wherever they stand. The
+	// stronger side declares.
+	candidates := make(map[[2]int64]bool, len(s.borders)+len(s.grievance))
+	for k := range s.borders {
+		candidates[k] = true
+	}
+	for k, g := range s.grievance {
+		if g >= warMarchGrievance {
+			candidates[k] = true
+		}
+	}
+	for _, k := range sortedPairs(candidates) {
+		if s.AtWar(k[0], k[1]) || s.realmName(k[0]) == "" || s.realmName(k[1]) == "" {
+			continue
+		}
+		g := s.grievance[k]
+		if g <= 0 || s.rng.Float64() >= warChance*g {
+			continue
+		}
+		a, b := k[0], k[1]
+		if s.realmStrength(b) > s.realmStrength(a) {
+			a, b = b, a
+		}
+		s.wars = append(s.wars, war{A: a, B: b, Start: s.Year})
+		ra, _ := s.realmSeatXY(a)
+		emit(SimEvent{Kind: "war", Major: true, X: ra[0], Y: ra[1],
+			Text: fmt.Sprintf("war — %s marches on %s", s.realmTitle(a), s.realmTitle(b))})
+	}
+
+	// Campaigns.
+	changed := false
+	kept := s.wars[:0]
+	for _, w := range s.wars {
+		nameA, nameB := s.realmName(w.A), s.realmName(w.B)
+		if nameA == "" || nameB == "" {
+			// One banner dissolved mid-war (sworn away, burned out, or
+			// captured whole) — the war ends with it.
+			emit(SimEvent{Kind: "peace", Major: true,
+				Text: "the war ends — one of its banners is no more"})
+			continue
+		}
+		strA, strB := s.realmStrength(w.A), s.realmStrength(w.B)
+		w.Score += warDriftK*(strA-strB)/(strA+strB) + s.rng.NormFloat64()*warNoise
+
+		if age := s.Year - w.Start; age > 0 && age%raidPeriod == 0 {
+			defender, attacker := w.B, w.A
+			if w.Score < 0 {
+				defender, attacker = w.A, w.B
+			}
+			if ti := s.frontSeat(defender, attacker, false); ti >= 0 {
+				st := &s.W.Seats[ti]
+				if st.RealmID == s.crownID && ti != s.capitalIdx && s.base[ti] >= 0 {
+					// A crown that cannot protect its halls loses them.
+					st.Allegiance = max(st.Allegiance-raidDoubt, 0)
+				}
+				emit(SimEvent{Kind: "raid", X: st.X, Y: st.Y,
+					Text: fmt.Sprintf("the war reaches %s — fields burn outside its walls", st.Name)})
+			}
+		}
+
+		if w.Score >= captureScore || w.Score <= -captureScore {
+			winner, loser := w.A, w.B
+			if w.Score < 0 {
+				winner, loser = w.B, w.A
+			}
+			if ti := s.frontSeat(loser, winner, true); ti >= 0 {
+				st := &s.W.Seats[ti]
+				old := st.RealmID
+				st.RealmID = winner
+				s.lowStreak[ti], s.highStreak[ti] = 0, 0
+				s.grievance[pairKey(loser, winner)] += grievanceCapture
+				emit(SimEvent{Kind: "capture", Major: true, X: st.X, Y: st.Y,
+					Text: fmt.Sprintf("%s falls to %s — House %s bends the knee",
+						st.Name, s.realmTitle(winner), s.house[ti])})
+				changed = true
+				s.maybeDissolve(old, emit)
+			}
+			w.Score = 0
+			if s.rng.Float64() < warEndAfterCapture || s.realmName(loser) == "" {
+				s.grievance[pairKey(w.A, w.B)] *= 0.5
+				emit(SimEvent{Kind: "peace", Major: true,
+					Text: fmt.Sprintf("peace between %s and %s — the borders rest", nameA, nameB)})
+				continue
+			}
+		}
+
+		if s.Year-w.Start >= maxWarYears {
+			s.grievance[pairKey(w.A, w.B)] *= 0.5
+			emit(SimEvent{Kind: "peace", Major: true,
+				Text: fmt.Sprintf("peace between %s and %s — both sides are spent", nameA, nameB)})
+			continue
+		}
+		kept = append(kept, w)
+	}
+	s.wars = kept
+	return changed
+}
+
+// realmSeatXY locates a realm's leading hall for event coordinates.
+func (s *Sim) realmSeatXY(id int64) ([2]int64, bool) {
+	for _, r := range s.W.Realms {
+		if r.ID == id {
+			return [2]int64{r.SeatX, r.SeatY}, true
+		}
+	}
+	return [2]int64{}, false
 }
 
 // stanceRank orders the stance vocabulary from least to most loyal.

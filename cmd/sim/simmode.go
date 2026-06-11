@@ -126,7 +126,7 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 		minor := ""
 		for _, e := range events {
 			switch e.Kind {
-			case "secede", "swear", "dissolve", "ruin", "founding":
+			case "secede", "swear", "dissolve", "ruin", "founding", "capture":
 				territoryChanged = true
 			}
 			if e.Major {

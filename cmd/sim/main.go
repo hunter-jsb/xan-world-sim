@@ -959,6 +959,15 @@ func (m *model) openCellPopup() {
 				if l := m.sim.RealmLineage(info.RealmID); l != "" {
 					add("%s", l)
 				}
+				for _, w := range m.sim.Wars() {
+					if w.A == info.RealmID || w.B == info.RealmID {
+						other := w.A
+						if other == info.RealmID {
+							other = w.B
+						}
+						add("at war with %s (since year %d)", m.sim.RealmDisplayName(other), w.Start)
+					}
+				}
 			}
 		}
 		if info.RiverName != "" {
