@@ -5,15 +5,19 @@ import (
 	"testing"
 )
 
-// TestRiversFlowDownhill checks that every river segment flows in a
-// direction where the *bedrock* elevation actually decreases. Pit-fill
-// raises cells in the working elevation field; if a basin cell got
-// raised significantly above its neighbors, the flow algorithm would
-// happily route water to a neighbor that's higher-than-self in the
-// bedrock — looking, to a viewer who sees bedrock-shaded glyphs, like
-// the river goes uphill. We want to know if this happens often.
+// TestRiversFlowDownhill bounds how far a river may climb in *bedrock*
+// terms. Flow runs on the pit-filled elevation field, so segments that
+// rise slightly in raw bedrock are expected — that's a basin the river
+// flows through (rendered as a lake) — but the rise must stay within
+// the cradle's noise amplitude (±50m, zoneAmplitude). A climb beyond
+// that means flow directions were computed on the wrong field or
+// pit-fill regressed: the river is visibly walking up a hillside.
 func TestRiversFlowDownhill(t *testing.T) {
-	for _, seed := range []int64{0, 42} {
+	// One noise amplitude of the zones rivers traverse (cradle 50m,
+	// foothill 100m — cradle dominates; observed max climb is ~28m).
+	const maxBedrockClimb = 50.0
+
+	for _, seed := range []int64{0, 42, 7, 1234567890} {
 		rng := rand.New(rand.NewSource(seed))
 		bedrock := generateBedrock(rng)
 		elev := make([][]float64, Height)
@@ -28,42 +32,43 @@ func TestRiversFlowDownhill(t *testing.T) {
 		accum := computeAccumulation(elev, bedrock, flowDir)
 		_, cells := traceRivers(bedrock, flowDir, accum, riverThreshold(), riverMaxLenFor(0.0))
 
-		var ns int // segments with neg dy = north (toward y=0)
-		var ss int // segments with pos dy = south
-		var ew int
-		var sea int
-		var uphill int
-		var samelevel int
+		if len(cells) == 0 {
+			t.Errorf("seed=%d: fully-warm climate produced no river cells", seed)
+			continue
+		}
+
+		var uphill, worstCount int
+		var worstRise float64
 		for _, c := range cells {
 			x, y := int(c.X), int(c.Y)
 			d := flowDir[y][x]
 			if d.dx == 0 && d.dy == 0 {
-				sea++
-				continue
+				continue // local sink — chain ends here
 			}
 			nx, ny := x+d.dx, y+d.dy
-			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
-				sea++
+			if !inBounds(nx, ny) {
+				continue // flows off-map
+			}
+			rise := bedrock[ny][nx].Elevation - bedrock[y][x].Elevation
+			if rise <= 0 {
 				continue
 			}
-			selfE := bedrock[y][x].Elevation
-			nE := bedrock[ny][nx].Elevation
-			switch {
-			case nE > selfE:
-				uphill++
-			case nE == selfE:
-				samelevel++
+			uphill++
+			if rise > worstRise {
+				worstRise = rise
 			}
-			switch {
-			case d.dy < 0:
-				ns++
-			case d.dy > 0:
-				ss++
-			default:
-				ew++
+			if rise > maxBedrockClimb {
+				worstCount++
+				if worstCount <= 3 { // don't flood the log
+					t.Errorf("seed=%d: river at (%d,%d) climbs %.0fm of bedrock to (%d,%d) — max allowed %.0fm",
+						seed, x, y, rise, nx, ny, maxBedrockClimb)
+				}
 			}
 		}
-		t.Logf("seed=%d: %d river cells; flow-down dir: south=%d north=%d east/west=%d sink=%d; bedrock-uphill segments=%d (same=%d)",
-			seed, len(cells), ss, ns, ew, sea, uphill, samelevel)
+		if worstCount > 3 {
+			t.Errorf("seed=%d: ...and %d more over-limit climbs", seed, worstCount-3)
+		}
+		t.Logf("seed=%d: %d river cells, %d gentle uphill segments, worst climb %.1fm",
+			seed, len(cells), uphill, worstRise)
 	}
 }

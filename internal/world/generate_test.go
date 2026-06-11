@@ -28,7 +28,6 @@ func TestGenerate_Deterministic(t *testing.T) {
 		{50, 42},  // post-LGM warming
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
 			a := hashWorld(Generate(c.seed, c.kya))
 			b := hashWorld(Generate(c.seed, c.kya))
@@ -56,7 +55,6 @@ func TestGenerate_Snapshot(t *testing.T) {
 		{100, 42, "a883b82723bc0f0e9de663147da0fbf8fd098e0fff2cbf338bf60315e9c7f203"}, // mid-cycle
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
 			got := hashWorld(Generate(c.seed, c.kya))
 			if strings.HasPrefix(c.expected, "REPLACE_ME") {

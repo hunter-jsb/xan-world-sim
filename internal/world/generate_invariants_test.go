@@ -22,7 +22,6 @@ func TestGenerate_Invariants(t *testing.T) {
 		{1234567890, KyaNow},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(fmt.Sprintf("seed=%d/kya=%d", c.seed, c.kya), func(t *testing.T) {
 			w := Generate(c.seed, c.kya)
 			checkRegionCells(t, w)
