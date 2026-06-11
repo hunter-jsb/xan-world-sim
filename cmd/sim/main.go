@@ -80,13 +80,16 @@ type model struct {
 	helpSel      int
 	helpEntrySel int
 
-	// Streaming sim news: map pings at recent event sites, the sticky
+	// Streaming sim news: color pings at recent event sites (sim-year
+	// memory), wall-clock event tags (the reading layer), the sticky
 	// headline on the status line, and the last chronicle page read
 	// (the chronicle reopens there).
-	simPings     []simPing
-	simNote      string
-	simNoteUntil int
-	lastEventIdx int
+	simPings        []simPing
+	simTags         []simTag
+	simNote         string
+	simNoteMajor    bool
+	simNoteDeadline time.Time
+	lastEventIdx    int
 
 	// Toast: a transient corner notice (overlays.go); gen guards the
 	// fade timer against replacement by a newer toast.

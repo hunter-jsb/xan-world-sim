@@ -122,7 +122,8 @@ func (m *model) exitSim() {
 	m.simGen++ // invalidate in-flight year ticks
 	m.simPaused = false
 	m.simPings = nil
-	m.simNote, m.simNoteUntil = "", 0
+	m.simTags = nil
+	m.simNote, m.simNoteMajor = "", false
 	m.lastEventIdx = 0
 	m.politicalMode = m.preSimPolitical
 	m.data.seats = m.preSimSeats
@@ -158,20 +159,31 @@ func (m *model) simTickCmd() tea.Cmd {
 }
 
 // simPing is one alarm mark on the map: an event happened at (x, y)
-// and the cell stays tinted until the given year. Headlines also
-// carry a label — a small in-map callout tag — for a shorter while.
+// and the cell stays tinted until the given sim year — the map's
+// memory, so it scales with the clock.
 type simPing struct {
-	x, y       int64
-	until      int
-	label      string
-	labelUntil int
+	x, y  int64
+	until int
+}
+
+// simTag is one in-map event description — the reading layer. Unlike
+// pings it lives in WALL-CLOCK time (a player needs the same seconds
+// to read at any speed), and any hold on the clock — pause, a popup,
+// a caravan — freezes its age, so pausing on an event keeps it.
+type simTag struct {
+	x, y     int64
+	label    string
+	major    bool
+	deadline time.Time
 }
 
 const (
-	pingYears = 10 // how long an event tints its cell
-	newsYears = 8  // how long a headline holds the status line
-	tagYears  = 6  // how long a headline's in-map callout tag shows
-	maxTags   = 3  // newest tags shown at once — annotate, don't bury
+	pingYears    = 10 // how long an event tints its cell (sim years)
+	maxTags      = 3  // tags shown at once — annotate, don't bury
+	tagMajorFor  = 8 * time.Second
+	tagMinorFor  = 4 * time.Second
+	noteMajorFor = 7 * time.Second
+	noteMinorFor = 3500 * time.Millisecond
 )
 
 // handleSimTick advances one year unless something holds the clock —
@@ -186,53 +198,88 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 	if !m.simMode || msg.gen != m.simGen {
 		return nil // stale tick from a left simulation
 	}
-	if m.popup == nil && m.exp == nil && !m.simPaused && m.sim != nil {
-		events := m.sim.StepMonths(simSpeeds[m.simSpeed].months)
-		var lastMajor *world.SimEvent
-		minor := ""
-		for i := range events {
-			e := &events[i]
-			if e.Major || e.Kind == "raid" {
-				p := simPing{x: e.X, y: e.Y, until: m.sim.Year + pingYears}
-				if e.Major {
-					p.label = fmt.Sprintf("y%d %s", e.Year, e.Text)
-					p.labelUntil = m.sim.Year + tagYears
-				}
-				m.simPings = append(m.simPings, p)
-			}
-			if e.Major {
-				lastMajor = e
-			} else {
-				minor = e.Text
-			}
-		}
-		live := m.simPings[:0]
-		for _, p := range m.simPings {
-			if m.sim.Year < p.until {
-				live = append(live, p)
-			}
-		}
-		m.simPings = live
-		m.applySimData(false)
-		if lastMajor != nil {
-			m.simNote = lastMajor.Text
-			m.simNoteUntil = m.sim.Year + newsYears
-		}
-		clock := fmt.Sprintf("year %d", m.sim.Year)
-		if simSpeeds[m.simSpeed].months < monthsPerYearUI {
-			clock = fmt.Sprintf("year %d, moon %d", m.sim.Year, m.sim.Month())
-		}
-		switch {
-		case m.simNote != "" && m.sim.Year < m.simNoteUntil:
-			m.status = clock + " ⚑ " + m.simNote
-		case minor != "":
-			m.status = clock + " — " + minor
-		default:
-			m.status = clock
-		}
-		m.mapStr = m.buildMap()
+	held := m.popup != nil || m.exp != nil || m.simPaused
+	if held || m.sim == nil {
+		// The clock is held — freeze the reading layer's age too, so a
+		// pause (or a long read in a popup) keeps tags and the
+		// headline exactly as they were.
+		m.freezeTags(simSpeeds[m.simSpeed].dur)
+		return m.simTickCmd()
 	}
+
+	events := m.sim.StepMonths(simSpeeds[m.simSpeed].months)
+	now := time.Now()
+	var lastMajor, lastMinor *world.SimEvent
+	for i := range events {
+		e := &events[i]
+		if e.Major || e.Kind == "raid" {
+			m.simPings = append(m.simPings, simPing{x: e.X, y: e.Y, until: m.sim.Year + pingYears})
+		}
+		life := tagMinorFor
+		if e.Major {
+			life = tagMajorFor
+			lastMajor = e
+		} else {
+			lastMinor = e
+		}
+		m.simTags = append(m.simTags, simTag{
+			x: e.X, y: e.Y, major: e.Major,
+			label:    fmt.Sprintf("y%d %s", e.Year, e.Text),
+			deadline: now.Add(life),
+		})
+	}
+	livePings := m.simPings[:0]
+	for _, p := range m.simPings {
+		if m.sim.Year < p.until {
+			livePings = append(livePings, p)
+		}
+	}
+	m.simPings = livePings
+	liveTags := m.simTags[:0]
+	for _, tg := range m.simTags {
+		if now.Before(tg.deadline) {
+			liveTags = append(liveTags, tg)
+		}
+	}
+	m.simTags = liveTags
+
+	m.applySimData(false)
+	switch {
+	case lastMajor != nil:
+		m.simNote, m.simNoteMajor = lastMajor.Text, true
+		m.simNoteDeadline = now.Add(noteMajorFor)
+	case lastMinor != nil && !(m.simNoteMajor && now.Before(m.simNoteDeadline)):
+		// Minors take the headline only when no major still holds it.
+		m.simNote, m.simNoteMajor = lastMinor.Text, false
+		m.simNoteDeadline = now.Add(noteMinorFor)
+	}
+	clock := fmt.Sprintf("year %d", m.sim.Year)
+	if simSpeeds[m.simSpeed].months < monthsPerYearUI {
+		clock = fmt.Sprintf("year %d, moon %d", m.sim.Year, m.sim.Month())
+	}
+	if m.simNote != "" && now.Before(m.simNoteDeadline) {
+		mark := " — "
+		if m.simNoteMajor {
+			mark = " ⚑ "
+		}
+		m.status = clock + mark + m.simNote
+	} else {
+		m.status = clock
+	}
+	m.mapStr = m.buildMap()
 	return m.simTickCmd()
+}
+
+// freezeTags pushes every wall-clock deadline forward by one held
+// tick — time the player spent paused or reading doesn't age the
+// reading layer.
+func (m *model) freezeTags(d time.Duration) {
+	for i := range m.simTags {
+		m.simTags[i].deadline = m.simTags[i].deadline.Add(d)
+	}
+	if m.simNote != "" {
+		m.simNoteDeadline = m.simNoteDeadline.Add(d)
+	}
 }
 
 // applySimData overlays the simulation's political state onto the

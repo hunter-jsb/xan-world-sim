@@ -42,7 +42,8 @@ func (m *model) helpTree() []helpNode {
 			"contested marchland pale gray, and water keeps its color to anchor the map",
 			"",
 			"the map annotates itself: named places tooltip beside the cursor, notices",
-			"toast in the top-right corner, and fresh headlines tag the cells they hit")},
+			"toast in the top-right corner, and every event tags the cell it hit for a",
+			"few real seconds — pause (space) and tags hold as long as you read")},
 
 		{title: "systems", children: []helpNode{
 			{title: "time — deep time & the slice", body: []string{

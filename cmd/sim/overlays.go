@@ -61,14 +61,18 @@ func (m *model) mapOverlays() []render.Overlay {
 		out = append(out, render.Overlay{Lines: render.Callout([]string{m.toastText}), TopRight: true})
 	}
 	if m.simMode && m.sim != nil {
+		// Newest first, headlines before chatter: majors fill the cap
+		// before any minor tag shows.
 		shown := 0
-		for i := len(m.simPings) - 1; i >= 0 && shown < maxTags; i-- {
-			p := m.simPings[i]
-			if p.label == "" || m.sim.Year >= p.labelUntil {
-				continue
+		for _, wantMajor := range []bool{true, false} {
+			for i := len(m.simTags) - 1; i >= 0 && shown < maxTags; i-- {
+				tg := m.simTags[i]
+				if tg.major != wantMajor {
+					continue
+				}
+				out = append(out, render.Overlay{Lines: render.Callout([]string{tg.label}), X: tg.x, Y: tg.y})
+				shown++
 			}
-			out = append(out, render.Overlay{Lines: render.Callout([]string{p.label}), X: p.x, Y: p.y})
-			shown++
 		}
 	}
 	return out
