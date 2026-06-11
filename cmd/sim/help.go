@@ -2,21 +2,39 @@ package main
 
 import "strings"
 
-// The help browser: H opens a topic menu and each feature gets an
-// explorable page, all through the one modal popup primitive. Pages
-// are declarative data here; the menu remembers where you were.
+// The help browser: H opens a tree of pages, all through the one
+// modal popup primitive. The root reads top to bottom in order of
+// need — keys first, then the legend, then the systems folder (how
+// the machine works) and the lore folder (what the world remembers).
+// Folders open as submenus; every page links back up.
 
-// helpTopic is one explorable page.
-type helpTopic struct {
-	title string
-	body  []string
+// helpNode is one entry in the tree: a page (body) or a folder
+// (children). Folders show with a ▸ in menus.
+type helpNode struct {
+	title    string
+	body     []string
+	children []helpNode
 }
 
-// helpTopics builds the browsable pages. The legend page reads the
+// helpTree builds the browsable tree. The legend page reads the
 // renderer's own legend so it can never drift from the map.
-func (m *model) helpTopics() []helpTopic {
-	return []helpTopic{
-		{"the map — legend & glyphs", append(strings.Split(m.legend, "\n"),
+func (m *model) helpTree() []helpNode {
+	return []helpNode{
+		{title: "keys", body: []string{
+			"hjkl / arrows   move the cursor          enter      inspect cell (dossier + actions)",
+			"w / b           hop next / prev place    o          list all places, jump from the list",
+			"] [ } {         drive time (see: time)   e          jump now ↔ LGM (deep time)",
+			"r               reroll the seed          p          toggle political view",
+			"S               enter / leave the slice  space      pause the clock (in a slice)",
+			"L               the chronicle (slice)    g          jump to the latest news (slice)",
+			"s               expedition to cursor / abandon one afield",
+			"H               this browser             q / esc    quit / close / back out",
+			"",
+			"in popups: ↑↓ or jk select, enter chooses, esc closes. space never chooses —",
+			"it would race the simulation's event popups when pausing.",
+		}},
+
+		{title: "the map — legend & glyphs", body: append(strings.Split(m.legend, "\n"),
 			"",
 			"rivers flow as > < v \\ / arrows toward their mouths; roads are · dots",
 			"ruined halls render as ash-gray h — sacked in a simulation, hoppable like any place",
@@ -26,139 +44,241 @@ func (m *model) helpTopics() []helpTopic {
 			"the map annotates itself: named places tooltip beside the cursor, notices",
 			"toast in the top-right corner, and fresh headlines tag the cells they hit")},
 
-		{"time — deep time & the slice", []string{
-			"the world is one continuous function of (seed, kya) — kya is kiloyears before present.",
-			"",
-			"deep time scrubs BETWEEN worlds: each kya is an independent equilibrium snapshot,",
-			"politics as the geography would settle it. ice retreats, rivers grow, realms form.",
-			"",
-			"S pins the current kya as a SLICE and runs years INSIDE it: geography holds still,",
-			"politics comes alive. the brackets drive time in both modes —",
-			"  deep time:  ] [ step ±5 ka    } { step ±25 ka    e jumps now ↔ LGM",
-			"  in a slice: ] [ speed up/down  } { snap moon/8x  space pauses",
-			"  the clock runs moon by moon at the slow end — a month per tick, then seasons,",
-			"  then whole years; the engine itself always steps monthly",
-			"",
-			"while a slice runs (or a caravan is afield) deep time is pinned: scrubbing would",
-			"dissolve the world under it. S leaves; re-entering replays the same history.",
+		{title: "systems", children: []helpNode{
+			{title: "time — deep time & the slice", body: []string{
+				"the world is one continuous function of (seed, kya) — kya is kiloyears before present.",
+				"",
+				"deep time scrubs BETWEEN worlds: each kya is an independent equilibrium snapshot,",
+				"politics as the geography would settle it. ice retreats, rivers grow, realms form.",
+				"",
+				"S pins the current kya as a SLICE and runs time INSIDE it: geography holds still,",
+				"politics comes alive. the brackets drive time in both modes —",
+				"  deep time:  ] [ step ±5 ka    } { step ±25 ka    e jumps now ↔ LGM",
+				"  in a slice: ] [ speed up/down  } { snap moon/8×  space pauses",
+				"the clock runs moon by moon at the slow end — a month per tick, then seasons,",
+				"then whole years; the engine itself always steps monthly.",
+				"",
+				"while a slice runs (or a caravan is afield) deep time is pinned: scrubbing would",
+				"dissolve the world under it. S leaves; re-entering replays the same history.",
+			}},
+			{title: "simulation — politics month by month", body: []string{
+				"each month, in order: lairs stir, courts drift, generations turn, bonds break,",
+				"halls fall and rise, wars run, borders re-settle.",
+				"",
+				"allegiance drifts toward what geography, temperament, and dragon pressure allow.",
+				"stances (sworn / tributary / nominal / autonomous) shift with hysteresis —",
+				"reputations change slower than moods. sustained collapse means secession;",
+				"sustained loyalty means swearing in. every hall has a house; lines fail (12%),",
+				"and a failed line on the throne ripples doubt through every sworn hall.",
+				"",
+				"nothing pauses the clock: headlines (secessions, wars, sackings, foundings)",
+				"take the status line under a ⚑ and ping the map red where they happened;",
+				"g jumps to the latest news. L opens the chronicle — every entry opens a page",
+				"with its impact and the thread of causes behind it (a ruin points at the",
+				"dragon's stir, a war at the grievance that seeded it — follow the thread back).",
+			}},
+			{title: "realms & war", body: []string{
+				"the crown is the downstream heartland power; its reach is the river network",
+				"(allegiance = 1/(1 + distance/λ) by the crown-courier metric: rivers 1, roads 2).",
+				"independent halls cluster into leagues by valley distance.",
+				"",
+				"grievance is heat between realms — secessions and captures pour it in, shared",
+				"borders add friction, time bleeds it off. enough heat means war: raids burn the",
+				"front hall's fields (a crown that cannot protect its halls loses them), and at",
+				"full score the front hall falls to the winner. peace comes by capture or exhaustion.",
+				"",
+				"borders are alive: conviction stretches each hall's reach, war fortune pushes the",
+				"front, and near-tied ground renders as contested marchland — pale no-man's gray.",
+			}},
+			{title: "dragons & lairs", body: []string{
+				"three tiers, all placed at local peaks: dragon dens D on mountains (raid radius 12),",
+				"drake nests d on foothills (8), wyvern rookeries w on cliffs (6).",
+				"",
+				"every lair projects pressure onto nearby halls — the strongest single threat,",
+				"weighted by tier. pressure taxes allegiance: self-sufficiency breeds independence.",
+				"",
+				"in a slice each lair's activity wanders: rampant dragons double their reach,",
+				"dormant ones free the roads. only dragonfire can sack a hall outright —",
+				"drakes harass, never raze — and the marches that live against the mountains",
+				"are hardened for exactly that life.",
+				"",
+				"lair danger also prices expedition routes: the danger map scales with live activity.",
+			}},
+			{title: "expeditions & the road", body: []string{
+				"s proposes a journey: the settlement nearest the cursor (by travel cost, danger",
+				"included) offers a caravan. depart, and it marches on its own day clock —",
+				"river 1 day/cell by boat, open land 4, marsh 8.",
+				"",
+				"the road writes its hazards at departure, and the same road always meets the",
+				"same fortune: lair shadows (press on / shelter / turn back), marsh fever",
+				"(rest / march), swift currents (ride for won days), and — mid-simulation —",
+				"toll riders in the land of a realm at war with the caravan's banner.",
+				"",
+				"the day clock holds under any popup. s abandons; arrival concludes.",
+				"deep time stays pinned while a caravan is afield — it lives in one frozen moment.",
+			}},
 		}},
 
-		{"simulation — politics year by year", []string{
-			"each year, in order: lairs stir, courts drift, generations turn, bonds break,",
-			"halls fall and rise, wars run, borders re-settle.",
-			"",
-			"allegiance drifts toward what geography, temperament, and dragon pressure allow.",
-			"stances (sworn / tributary / nominal / autonomous) shift with hysteresis —",
-			"reputations change slower than moods. sustained collapse means secession;",
-			"sustained loyalty means swearing in. every hall has a house; lines fail (12%),",
-			"and a failed line on the throne ripples doubt through every sworn hall.",
-			"",
-			"nothing pauses the years: headlines (secessions, wars, sackings, foundings)",
-			"take the status line under a ⚑ and ping the map red where they happened;",
-			"g jumps to the latest news. L opens the chronicle — every entry opens a page",
-			"with its impact and the thread of causes behind it (a ruin points at the",
-			"dragon's stir, a war at the grievance that seeded it — follow the thread back).",
-		}},
-
-		{"realms & war", []string{
-			"the crown is the downstream heartland power; its reach is the river network",
-			"(allegiance = 1/(1 + distance/λ) by the crown-courier metric: rivers 1, roads 2).",
-			"independent halls cluster into leagues by valley distance.",
-			"",
-			"grievance is heat between realms — secessions and captures pour it in, shared",
-			"borders add friction, time bleeds it off. enough heat means war: raids burn the",
-			"front hall's fields (a crown that cannot protect its halls loses them), and at",
-			"full score the front hall falls to the winner. peace comes by capture or exhaustion.",
-			"",
-			"borders are alive: conviction stretches each hall's reach, war fortune pushes the",
-			"front, and near-tied ground renders as contested marchland — pale no-man's gray.",
-		}},
-
-		{"dragons & lairs", []string{
-			"three tiers, all placed at local peaks: dragon dens D on mountains (raid radius 12),",
-			"drake nests d on foothills (8), wyvern rookeries w on cliffs (6).",
-			"",
-			"every lair projects pressure onto nearby halls — the strongest single threat,",
-			"weighted by tier. pressure taxes allegiance: self-sufficiency breeds independence.",
-			"",
-			"in a slice each lair's activity wanders: rampant dragons double their reach,",
-			"dormant ones free the roads. only dragonfire can sack a hall outright —",
-			"drakes harass, never raze — and the marches that live against the mountains",
-			"are hardened for exactly that life.",
-			"",
-			"lair danger also prices expedition routes: the danger map scales with live activity.",
-		}},
-
-		{"expeditions & the road", []string{
-			"s proposes a journey: the settlement nearest the cursor (by travel cost, danger",
-			"included) offers a caravan. depart, and it marches on its own day clock —",
-			"river 1 day/cell by boat, open land 4, marsh 8.",
-			"",
-			"the road writes its hazards at departure, and the same road always meets the",
-			"same fortune: lair shadows (press on / shelter / turn back), marsh fever",
-			"(rest / march), swift currents (ride for won days), and — mid-simulation —",
-			"toll riders in the land of a realm at war with the caravan's banner.",
-			"",
-			"the day clock holds under any popup. s abandons; arrival concludes.",
-			"deep time stays pinned while a caravan is afield — it lives in one frozen moment.",
-		}},
-
-		{"keys", []string{
-			"hjkl / arrows   move the cursor          enter      inspect cell (dossier + actions)",
-			"w / b           hop next / prev place    o          list all places, jump from the list",
-			"] [ } {         drive time (see: time)   e          jump now ↔ LGM (deep time)",
-			"r               reroll the seed          p          toggle political view",
-			"S               enter / leave the slice  space      pause the years (in a slice)",
-			"L               the chronicle (slice)    g          jump to the latest news (slice)",
-			"s               expedition to cursor / abandon one afield",
-			"H               this browser             q / esc    quit / close / back out",
-			"",
-			"in popups: ↑↓ or jk select, enter chooses, esc closes. space never chooses —",
-			"it would race the simulation's event popups when pausing.",
+		{title: "lore", children: []helpNode{
+			{title: "the deep history", body: []string{
+				"humankind woke ~250,000 years ago in caves on the frozen northern plateau —",
+				"the ice was the cradle, because the warm lowlands belonged to dragons and",
+				"megafauna no early hunter could contest. the cold was a refuge, not a curse.",
+				"",
+				"two peoples diverged: Northerners, mammoth-hunters of the plateau, and",
+				"Coastals, who settled the receded shores and learned to farm. through every",
+				"long climate cycle they traded, sundered, raided, and reunited — warming",
+				"breaks the routes, scarcity drives one-way plunder voyages, cooling knits",
+				"the world back together. the pattern repeated for two hundred millennia.",
+				"",
+				"the Melt (~10–20 kya) carved the mountain barrier brutal and built the",
+				"fertile cradle from glacial outwash. its settlers — mixed Northern and",
+				"Coastal stock — followed the new rivers south and east, and only eons later",
+				"drifted back upstream: the old homeland's mountains are now the frontier.",
+				"",
+				"now the world turns cold again. seas recede; drowned ruins of older warm",
+				"ages are surfacing. the deep past is becoming reachable. this is the Turning.",
+			}},
+			{title: "the cradle & its peoples", body: []string{
+				"the cradle is the new fertile land south of the mountain barrier — glacial",
+				"outwash threaded by young rivers, the heart of post-Melt civilization.",
+				"",
+				"around it: the high plateau of the old kingdom in the frozen north, where",
+				"pure Northerners still hold the first caves; Agraria in the northwest, the",
+				"drowned ancestral coast that resurfaces as the seas fall; the ancient salty",
+				"Brine to the west; the young diluted Eastern Sea, whose gentler waters drew",
+				"the first cradle settlements; and unknown lands beyond it.",
+				"",
+				"the heartland grew downstream — river-fed, populous, calm. the north is",
+				"frontier: salmon-lords on the upper rivers, the garden valley of the Doab,",
+				"and halls that answer to the mountains before they answer to any crown.",
+			}},
+			{title: "the dragon family", body: []string{
+				"three winged predators shape the world, each to its own scale of fear:",
+				"",
+				"the DRAGON is the apex — six-limbed, fire-breathed, often wise enough to",
+				"speak, scheme, and hold a grudge across decades. rare; one arriving over a",
+				"town is an extinction-level event. they den high in mountain caves.",
+				"",
+				"the DRAKE is the everyday menace — smaller, bestial, what northern defenses",
+				"are actually built against. ballista towers and stone-roofed halls exist",
+				"because wooden longhouses cook the first time a drake breathes on them.",
+				"",
+				"the WYVERN is the lesser raider — bipedal, poison-tailed, colonial on the",
+				"cliffs. a flock is more nuisance than catastrophe, unless you are a caravan.",
+				"",
+				"northerners call all three 'drakes', loosely. 'dragon' is reserved — everyone",
+				"knows when that is what you mean.",
+			}},
+			{title: "the crown & the marches", body: []string{
+				"geography writes the politics. the wealthy downstream heartland — grain,",
+				"trade, the great river — crowns a capital where the waters converge, and",
+				"the river is the crown's reach: what a courier can travel, a crown can hold.",
+				"",
+				"upstream is another world. the marches sit against the mountain wall under",
+				"constant dragon pressure — battle-hardened, independent-minded, bound to the",
+				"crown by duty more than love: 'we are the wall.' headwater holds keep the",
+				"sacred sources; outholds scratch a living off the grid; the reaches are",
+				"essentially autonomous in practice, too far for any writ to matter.",
+				"",
+				"defense demands self-sufficiency, and self-sufficiency breeds independence —",
+				"so the same mountains that shield the cradle keep trying to break it apart.",
+			}},
 		}},
 	}
 }
 
-// openHelpPopup is the topic menu; it remembers the last page read.
-func (m *model) openHelpPopup() {
-	topics := m.helpTopics()
-	opts := make([]popupOption, 0, len(topics)+1)
-	for i, t := range topics {
-		opts = append(opts, popupOption{label: t.title, action: popHelpTopic, arg: i})
+// helpNodeAt walks the tree to the node a path of child indexes
+// names; an empty path is the (virtual) root.
+func (m *model) helpNodeAt(path []int) (helpNode, bool) {
+	node := helpNode{title: "the cradle — help", children: m.helpTree()}
+	for _, i := range path {
+		if i < 0 || i >= len(node.children) {
+			return helpNode{}, false
+		}
+		node = node.children[i]
 	}
-	opts = append(opts, popupOption{label: "Close", action: popClose})
-	sel := m.helpSel
-	if sel < 0 || sel >= len(topics) {
+	return node, true
+}
+
+// openHelpPopup opens the help tree at the root.
+func (m *model) openHelpPopup() {
+	m.helpPath = nil
+	m.openHelpMenu(m.helpSel)
+}
+
+// openHelpMenu lists the children of the node at m.helpPath with the
+// selection on sel. Folders carry a ▸; the root closes, deeper
+// levels go back up.
+func (m *model) openHelpMenu(sel int) {
+	node, ok := m.helpNodeAt(m.helpPath)
+	if !ok || len(node.children) == 0 {
+		return
+	}
+	opts := make([]popupOption, 0, len(node.children)+1)
+	for i, c := range node.children {
+		label := c.title
+		if len(c.children) > 0 {
+			label += "  ▸"
+		}
+		opts = append(opts, popupOption{label: label, action: popHelpTopic, arg: i})
+	}
+	if len(m.helpPath) == 0 {
+		opts = append(opts, popupOption{label: "Close", action: popClose})
+	} else {
+		opts = append(opts, popupOption{label: "Back", action: popHelpUp})
+	}
+	if sel < 0 || sel >= len(opts) {
 		sel = 0
 	}
 	m.popup = &popupState{
-		title: "the cradle — help",
-		body:  []string{dimStyle.Render("pick a topic; every page links back here")},
+		title: node.title,
+		body:  []string{dimStyle.Render("pick an entry; every page links back")},
 		opts:  opts,
 		sel:   sel,
 	}
 	m.mapStr = m.buildMap()
 }
 
-// openHelpTopic shows one page with a way back to the menu.
-func (m *model) openHelpTopic(i int) {
-	topics := m.helpTopics()
-	if i < 0 || i >= len(topics) {
+// openHelpEntry descends to child i of the current menu: folders open
+// as submenus, pages render with a way back.
+func (m *model) openHelpEntry(i int) {
+	node, ok := m.helpNodeAt(append(append([]int{}, m.helpPath...), i))
+	if !ok {
 		return
 	}
-	m.helpSel = i
-	t := topics[i]
-	body := make([]string, len(t.body))
-	for j, l := range t.body {
+	if len(m.helpPath) == 0 {
+		m.helpSel = i
+	}
+	if len(node.children) > 0 {
+		m.helpPath = append(m.helpPath, i)
+		m.openHelpMenu(0)
+		return
+	}
+	m.helpEntrySel = i
+	body := make([]string, len(node.body))
+	for j, l := range node.body {
 		body[j] = dimStyle.Render(l)
 	}
 	m.popup = &popupState{
-		title: t.title,
+		title: node.title,
 		body:  body,
 		opts: []popupOption{
-			{label: "Back to topics", action: popHelpMenu},
+			{label: "Back", action: popHelpMenu},
 			{label: "Close", action: popClose},
 		},
 	}
 	m.mapStr = m.buildMap()
+}
+
+// helpUp pops one folder level and reopens that menu with the folder
+// we came from selected.
+func (m *model) helpUp() {
+	if len(m.helpPath) == 0 {
+		m.openHelpMenu(m.helpSel)
+		return
+	}
+	last := m.helpPath[len(m.helpPath)-1]
+	m.helpPath = m.helpPath[:len(m.helpPath)-1]
+	m.openHelpMenu(last)
 }

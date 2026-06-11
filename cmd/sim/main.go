@@ -73,8 +73,12 @@ type model struct {
 	// pois is every named place in (y, x) hop order — w/b targets.
 	pois []poi
 
-	// helpSel is the last help topic read — the menu reopens there.
-	helpSel int
+	// Help-tree navigation: the folder path currently open, the last
+	// root entry visited (the root menu reopens there), and the entry
+	// index of the page being read (Back selects it).
+	helpPath     []int
+	helpSel      int
+	helpEntrySel int
 
 	// Streaming sim news: map pings at recent event sites, the sticky
 	// headline on the status line, and the last chronicle page read
@@ -197,8 +201,9 @@ const (
 	popEventDetail popupAction = "event-detail" // arg = index into m.sim.Log — opens the event's page
 	popChronicle   popupAction = "chronicle"    // back to the chronicle list
 	popExpChoice   popupAction = "exp-choice"   // arg = index into the pending hazard's choices
-	popHelpTopic   popupAction = "help-topic"   // arg = index into helpTopics
-	popHelpMenu    popupAction = "help-menu"    // back to the topic list
+	popHelpTopic   popupAction = "help-topic"   // arg = child index in the current help menu
+	popHelpMenu    popupAction = "help-menu"    // back from a page to its menu
+	popHelpUp      popupAction = "help-up"      // up one folder level
 )
 
 type popupOption struct {
@@ -987,9 +992,11 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 		m.resolveExpChoice(opt.arg)
 
 	case popHelpTopic:
-		m.openHelpTopic(opt.arg)
+		m.openHelpEntry(opt.arg)
 	case popHelpMenu:
-		m.openHelpPopup()
+		m.openHelpMenu(m.helpEntrySel)
+	case popHelpUp:
+		m.helpUp()
 	}
 	m.mapStr = m.buildMap()
 	return m, nil

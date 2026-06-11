@@ -1,62 +1,100 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
-// TestHelpTopics: every page has a unique title, non-empty content,
-// and lines that fit the popup's content width without truncation.
-func TestHelpTopics(t *testing.T) {
+// TestHelpTree_Shape: the root reads in order of need — keys, legend,
+// then the systems and lore folders — and every page in the tree has
+// a unique title, content, and lines that fit the popup.
+func TestHelpTree_Shape(t *testing.T) {
 	m := &model{legend: "line one\nline two"}
-	topics := m.helpTopics()
-	if len(topics) < 5 {
-		t.Fatalf("only %d help topics — the browser lost pages", len(topics))
+	root := m.helpTree()
+	if len(root) != 4 {
+		t.Fatalf("root has %d entries, want 4 (keys, legend, systems, lore)", len(root))
 	}
+	if root[0].title != "keys" {
+		t.Errorf("first root entry %q, want keys at the top", root[0].title)
+	}
+	if !strings.Contains(root[1].title, "legend") {
+		t.Errorf("second root entry %q, want the legend", root[1].title)
+	}
+	if root[2].title != "systems" || len(root[2].children) < 4 {
+		t.Errorf("third entry should be the systems folder with its topics, got %q (%d children)",
+			root[2].title, len(root[2].children))
+	}
+	if root[3].title != "lore" || len(root[3].children) < 3 {
+		t.Errorf("fourth entry should be the lore folder, got %q (%d children)",
+			root[3].title, len(root[3].children))
+	}
+
 	seen := map[string]bool{}
-	for _, topic := range topics {
-		if topic.title == "" || len(topic.body) == 0 {
-			t.Errorf("topic %q is empty", topic.title)
-		}
-		if seen[topic.title] {
-			t.Errorf("duplicate topic title %q", topic.title)
-		}
-		seen[topic.title] = true
-		for _, l := range topic.body {
-			if utf8.RuneCountInString(l) > 96 {
-				t.Errorf("topic %q line overflows the popup (%d runes): %q",
-					topic.title, utf8.RuneCountInString(l), l)
+	var walk func(nodes []helpNode)
+	walk = func(nodes []helpNode) {
+		for _, n := range nodes {
+			if n.title == "" {
+				t.Error("node without a title")
 			}
+			if seen[n.title] {
+				t.Errorf("duplicate title %q", n.title)
+			}
+			seen[n.title] = true
+			if len(n.children) == 0 && len(n.body) == 0 {
+				t.Errorf("page %q is empty", n.title)
+			}
+			for _, l := range n.body {
+				if utf8.RuneCountInString(l) > 96 {
+					t.Errorf("page %q line overflows the popup (%d runes)", n.title, utf8.RuneCountInString(l))
+				}
+			}
+			walk(n.children)
 		}
 	}
+	walk(root)
 }
 
-// TestHelpBrowserNavigation: the menu lists every topic plus Close,
-// pages carry a way back, and the menu remembers the last page read.
-func TestHelpBrowserNavigation(t *testing.T) {
+// TestHelpTree_Navigation: folders open as submenus with a Back,
+// pages link back to their menu, and ascending selects the folder you
+// came from.
+func TestHelpTree_Navigation(t *testing.T) {
 	m := &model{legend: "legend"}
+
 	m.openHelpPopup()
-	topics := m.helpTopics()
-	if got, want := len(m.popup.opts), len(topics)+1; got != want {
-		t.Fatalf("menu has %d options, want %d (topics + Close)", got, want)
+	if got, want := len(m.popup.opts), 5; got != want {
+		t.Fatalf("root menu has %d options, want %d (4 entries + Close)", got, want)
 	}
-	if m.popup.opts[0].action != popHelpTopic {
-		t.Errorf("first menu option action %q, want %q", m.popup.opts[0].action, popHelpTopic)
-	}
-	if m.popup.opts[len(m.popup.opts)-1].action != popClose {
-		t.Error("last menu option should be Close")
+	if !strings.Contains(m.popup.opts[2].label, "▸") {
+		t.Errorf("systems entry %q should carry a folder marker", m.popup.opts[2].label)
 	}
 
-	m.openHelpTopic(3)
-	if m.popup.title != topics[3].title {
-		t.Errorf("topic page title %q, want %q", m.popup.title, topics[3].title)
+	// Descend into lore (index 3): submenu with its pages + Back.
+	m.openHelpEntry(3)
+	if len(m.helpPath) != 1 || m.helpPath[0] != 3 {
+		t.Fatalf("helpPath = %v, want [3]", m.helpPath)
 	}
+	if m.popup.title != "lore" {
+		t.Errorf("submenu title %q, want lore", m.popup.title)
+	}
+	last := m.popup.opts[len(m.popup.opts)-1]
+	if last.action != popHelpUp {
+		t.Errorf("submenu's last option action %q, want Back (help-up)", last.action)
+	}
+
+	// Open a lore page; its Back returns to the lore menu on the page.
+	m.openHelpEntry(1)
 	if m.popup.opts[0].action != popHelpMenu {
-		t.Error("topic page's first option should lead back to the menu")
+		t.Errorf("page's first option action %q, want back-to-menu", m.popup.opts[0].action)
+	}
+	m.openHelpMenu(m.helpEntrySel)
+	if m.popup.title != "lore" || m.popup.sel != 1 {
+		t.Errorf("back landed on %q sel %d, want lore sel 1", m.popup.title, m.popup.sel)
 	}
 
-	m.openHelpPopup()
-	if m.popup.sel != 3 {
-		t.Errorf("menu reopened at %d, want 3 (the last page read)", m.popup.sel)
+	// Up from lore returns to the root with lore selected.
+	m.helpUp()
+	if len(m.helpPath) != 0 || m.popup.sel != 3 {
+		t.Errorf("up landed at path %v sel %d, want root with lore (3) selected", m.helpPath, m.popup.sel)
 	}
 }
