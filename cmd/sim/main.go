@@ -65,8 +65,9 @@ type model struct {
 	// politicalMode tints the map by realm instead of terrain.
 	politicalMode bool
 
-	// showHelp displays the glyph legend and key reference (H toggles).
-	showHelp bool
+	// popup is the active modal (nil = none). While open it captures
+	// all input; options dispatch by action ID in handlePopupChoice.
+	popup *popupState
 
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
@@ -123,6 +124,34 @@ type expTickMsg struct{ gen int }
 
 // dayTick is the wall-clock pace of one expedition day.
 const dayTick = 150 * time.Millisecond
+
+// popupAction identifies what an option does when chosen — dispatched
+// centrally in handlePopupChoice so popups stay declarative data.
+type popupAction string
+
+const (
+	popClose     popupAction = "close"
+	popSendExp   popupAction = "send-expedition" // from a cell dossier
+	popDepart    popupAction = "depart"          // confirm a proposed expedition
+	popCancelExp popupAction = "cancel-expedition"
+	popConclude  popupAction = "conclude-expedition"
+)
+
+type popupOption struct {
+	label  string
+	action popupAction
+}
+
+// popupState is one modal: a title, pre-styled body lines, and an
+// optional action list. cellX/cellY carry the map context the popup
+// was opened on (e.g., the dossier cell an expedition should target).
+type popupState struct {
+	title        string
+	body         []string
+	opts         []popupOption
+	sel          int
+	cellX, cellY int64
+}
 
 // worldData bundles the viewport query results the TUI renders from.
 type worldData struct {
@@ -186,6 +215,31 @@ func (m model) Init() tea.Cmd { return nil }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Modal popup captures all input while open (ctrl+c still quits).
+		if m.popup != nil {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc", "q":
+				return m.dismissPopup()
+			case "up", "k":
+				if len(m.popup.opts) > 0 {
+					m.popup.sel = (m.popup.sel + len(m.popup.opts) - 1) % len(m.popup.opts)
+					m.mapStr = m.buildMap()
+				}
+			case "down", "j":
+				if len(m.popup.opts) > 0 {
+					m.popup.sel = (m.popup.sel + 1) % len(m.popup.opts)
+					m.mapStr = m.buildMap()
+				}
+			case "enter", " ":
+				if len(m.popup.opts) == 0 {
+					return m.dismissPopup()
+				}
+				return m.handlePopupChoice(m.popup.opts[m.popup.sel].action)
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -195,6 +249,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
+		case "enter":
+			m.openCellPopup()
 		case "r":
 			if m.deepTimeLocked() {
 				return m, nil
@@ -267,9 +323,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 
-		// Help: glyph legend + key reference, hidden by default.
+		// Help: glyph legend + key reference, in a popup.
 		case "H":
-			m.showHelp = !m.showHelp
+			m.openHelpPopup()
 
 		// Political map mode: realm-tinted territory instead of terrain.
 		case "p":
@@ -283,20 +339,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mapStr = m.buildMap()
 
 		// Expedition: s proposes a journey from the nearest settlement
-		// to the cursor; y departs; s/esc abandons one in progress.
+		// to the cursor (confirm popup); s abandons one in progress.
 		case "s":
 			if m.exp == nil {
-				m.planExpedition()
+				m.planExpedition(m.curX, m.curY)
 			} else {
 				m.abandonExpedition()
-			}
-		case "y":
-			if m.exp != nil && m.exp.phase == expPending {
-				m.exp.phase = expRunning
-				m.status = fmt.Sprintf("the %s expedition departs — %d days ahead",
-					m.exp.fromName, m.exp.totalDays())
-				m.mapStr = m.buildMap()
-				return m, m.expTickCmd()
 			}
 
 		// Cursor navigation — hjkl or arrows, instant (no regen needed).
@@ -335,6 +383,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			e.phase = expArrived
 			m.status = fmt.Sprintf("the %s expedition arrived at (%d,%d) after %d days",
 				e.fromName, e.destX, e.destY, e.totalDays())
+			m.popup = &popupState{
+				title: "expedition arrived",
+				body: []string{
+					fmt.Sprintf("The %s expedition reached (%d,%d)", e.fromName, e.destX, e.destY),
+					fmt.Sprintf("after %d days on the road.", e.totalDays()),
+				},
+				opts:  []popupOption{{"Conclude the expedition", popConclude}},
+				cellX: e.destX, cellY: e.destY,
+			}
 			m.mapStr = m.buildMap()
 			return m, nil
 		}
@@ -357,9 +414,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buildLookups()
 		m.rebuildGrid()
 		// World changed — terrain costs shift, so a stale expedition
-		// would be walking a world that no longer exists.
+		// (or a popup about the old world) is meaningless now.
 		m.exp = nil
 		m.expGen++
+		m.popup = nil
 		m.mapStr = m.buildMap()
 		m.era = msg.era
 		m.status = ""
@@ -407,6 +465,10 @@ func (m *model) rebuildGrid() {
 func (m *model) buildMap() string {
 	if m.gridBuf == nil {
 		return ""
+	}
+	if m.popup != nil {
+		box := render.PopupBox(m.popup.title, m.popup.body, popupLabels(m.popup.opts), m.popup.sel)
+		return m.gridBuf.RenderWithOverlay(m.curX, m.curY, m.overlayPath(), box)
 	}
 	return m.gridBuf.Render(m.curX, m.curY, m.overlayPath())
 }
@@ -506,40 +568,41 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(render.InfoPanel(m.cellInfoAt(m.curX, m.curY)))
 	b.WriteString("\n\n")
-	if m.showHelp {
-		b.WriteString(m.legend)
-		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("hjkl / arrows cursor   s expedition to cursor   y depart   p political map"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("] / [ ±5ka   } / { (or shift+arrows) ±25ka   e now/LGM   r reroll   H close help   q quit"))
-		b.WriteString("\n\n")
-	}
-	// Footer: only what matters right now — modal expedition prompts,
-	// the help key, and the status line. The full reference lives
-	// behind H.
+	// Footer: only what matters right now — popup navigation when one
+	// is open, modal expedition prompts, the help key, and the status
+	// line. The full reference lives behind H.
 	var hints []string
-	if m.exp != nil {
-		switch m.exp.phase {
-		case expPending:
-			hints = append(hints, "y depart   s cancel")
-		case expRunning:
-			hints = append(hints, fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays()))
-		case expArrived:
-			hints = append(hints, "s conclude expedition")
+	switch {
+	case m.popup != nil:
+		hints = append(hints, "↑↓ select   enter choose   esc close")
+	default:
+		if m.exp != nil {
+			switch m.exp.phase {
+			case expRunning:
+				hints = append(hints, fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays()))
+			case expArrived:
+				hints = append(hints, "s conclude expedition")
+			}
+		} else {
+			hints = append(hints, "enter inspect")
 		}
+		hints = append(hints, "H help", "q quit")
 	}
-	if m.showHelp {
-		hints = append(hints, "H close help")
-	} else {
-		hints = append(hints, "H help")
-	}
-	hints = append(hints, "q quit")
 	b.WriteString(dimStyle.Render(strings.Join(hints, "   ")))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
 	}
 	return b.String()
+}
+
+// popupLabels extracts option labels for the render layer.
+func popupLabels(opts []popupOption) []string {
+	out := make([]string, len(opts))
+	for i, o := range opts {
+		out[i] = o.label
+	}
+	return out
 }
 
 func main() {
@@ -657,21 +720,153 @@ func (m *model) abandonExpedition() {
 	m.mapStr = m.buildMap()
 }
 
-// planExpedition proposes a journey: the settlement nearest the cursor
-// (by travel cost, dragon danger included — the world's own metric of
-// "near") will send a caravan to the cursor cell. The player confirms
-// with y before anyone marches.
-func (m *model) planExpedition() {
-	if m.pathCellCost(m.curX, m.curY) < 0 {
+// dismissPopup closes the modal. Closing a proposal popup cancels the
+// pending expedition — esc means "no" to a confirm dialog.
+func (m model) dismissPopup() (tea.Model, tea.Cmd) {
+	m.popup = nil
+	if m.exp != nil && m.exp.phase == expPending {
+		m.exp = nil
+		m.expGen++
+		m.status = "expedition cancelled"
+	}
+	m.mapStr = m.buildMap()
+	return m, nil
+}
+
+// handlePopupChoice dispatches the chosen option's action.
+func (m model) handlePopupChoice(action popupAction) (tea.Model, tea.Cmd) {
+	pop := m.popup
+	m.popup = nil
+	switch action {
+	case popClose:
+		// just closes
+
+	case popSendExp:
+		m.mapStr = m.buildMap()
+		m.planExpedition(pop.cellX, pop.cellY)
+		return m, nil
+
+	case popDepart:
+		if m.exp != nil && m.exp.phase == expPending {
+			m.exp.phase = expRunning
+			m.status = fmt.Sprintf("the %s expedition departs — %d days ahead",
+				m.exp.fromName, m.exp.totalDays())
+			m.mapStr = m.buildMap()
+			return m, m.expTickCmd()
+		}
+
+	case popCancelExp:
+		if m.exp != nil && m.exp.phase == expPending {
+			m.exp = nil
+			m.expGen++
+			m.status = "expedition cancelled"
+		}
+
+	case popConclude:
+		m.exp = nil
+		m.expGen++
+		m.status = "expedition concluded"
+	}
+	m.mapStr = m.buildMap()
+	return m, nil
+}
+
+// openCellPopup shows the full dossier for the cursor cell — the
+// info panel's data plus everything that doesn't fit on one line —
+// with context actions.
+func (m *model) openCellPopup() {
+	info := m.cellInfoAt(m.curX, m.curY)
+	title := fmt.Sprintf("(%d,%d)", m.curX, m.curY)
+	var body []string
+	add := func(format string, args ...any) {
+		body = append(body, dimStyle.Render(fmt.Sprintf(format, args...)))
+	}
+	if info.Kind == "" {
+		add("uncharted void")
+	} else {
+		switch {
+		case info.SeatName != "":
+			title = info.SeatName
+		case info.FeatureName != "":
+			title = info.FeatureName
+		case info.RiverName != "":
+			title = "the " + info.RiverName
+		}
+		add("terrain: %s   elev %.0fm", info.Kind, info.Elev)
+		if info.SeatName != "" {
+			add("seat: %s", info.SeatName)
+		}
+		if info.RealmName != "" {
+			line := "realm: " + info.RealmName
+			if info.SeatStance != "" {
+				line += "   " + info.SeatStance
+			}
+			add("%s", line)
+		}
+		if info.RiverName != "" {
+			add("river: %s", info.RiverName)
+		}
+		if info.FeatureName != "" {
+			line := "feature: " + info.FeatureName
+			if info.FeatureDetail != "" {
+				line += "   " + info.FeatureDetail
+			}
+			add("%s", line)
+		}
+		if info.SeatPressure > 0 {
+			add("dragon pressure: %.0f", info.SeatPressure)
+		}
+		if d := m.dangerMap[[2]int64{m.curX, m.curY}]; d > 0 {
+			add("lair danger: +%d days/cell", d)
+		}
+		if c := m.pathCellCost(m.curX, m.curY); c >= 0 {
+			add("travel: %d days per cell", c)
+		} else {
+			add("travel: impassable")
+		}
+	}
+	opts := []popupOption{}
+	if m.exp == nil && m.pathCellCost(m.curX, m.curY) >= 0 {
+		opts = append(opts, popupOption{"Send expedition here", popSendExp})
+	}
+	opts = append(opts, popupOption{"Close", popClose})
+	m.popup = &popupState{
+		title: title, body: body, opts: opts,
+		cellX: m.curX, cellY: m.curY,
+	}
+	m.mapStr = m.buildMap()
+}
+
+// openHelpPopup shows the glyph legend and the key reference.
+func (m *model) openHelpPopup() {
+	body := strings.Split(m.legend, "\n")
+	body = append(body, "",
+		dimStyle.Render("hjkl / arrows cursor   enter inspect cell   s expedition to cursor"),
+		dimStyle.Render("p political map   ] / [ ±5ka   } / { (or shift+arrows) ±25ka"),
+		dimStyle.Render("e now/LGM   r reroll   H help   q quit"))
+	m.popup = &popupState{
+		title: "the cradle — legend & keys",
+		body:  body,
+		opts:  []popupOption{{"Close", popClose}},
+	}
+	m.mapStr = m.buildMap()
+}
+
+// planExpedition proposes a journey: the settlement nearest the
+// destination (by travel cost, dragon danger included — the world's
+// own metric of "near") offers to send a caravan there. A confirm
+// popup asks before anyone marches.
+func (m *model) planExpedition(destX, destY int64) {
+	if m.pathCellCost(destX, destY) < 0 {
 		m.status = "no expedition can reach this terrain"
 		return
 	}
-	seat, ok := m.nearestSeat(m.curX, m.curY)
+	seat, ok := m.nearestSeat(destX, destY)
 	if !ok {
 		m.status = "no settlement can reach this place"
 		return
 	}
-	path := m.computePath(seat.X, seat.Y, m.curX, m.curY)
+	path := m.computePath(seat.X, seat.Y, destX, destY)
 	if len(path) < 2 {
 		m.status = "the destination is at the hall's own doorstep"
 		return
@@ -686,13 +881,23 @@ func (m *model) planExpedition() {
 	m.exp = &expedition{
 		phase:    expPending,
 		fromName: seat.Name,
-		destX:    m.curX,
-		destY:    m.curY,
+		destX:    destX,
+		destY:    destY,
 		path:     path,
 		arrive:   arrive,
 	}
-	m.status = fmt.Sprintf("expedition: %s (%d,%d) → (%d,%d), %d days — y to depart, s to cancel",
-		seat.Name, seat.X, seat.Y, m.curX, m.curY, arrive[len(arrive)-1])
+	m.popup = &popupState{
+		title: "expedition",
+		body: []string{
+			dimStyle.Render(fmt.Sprintf("%s (%d,%d) offers a caravan to (%d,%d).",
+				seat.Name, seat.X, seat.Y, destX, destY)),
+			dimStyle.Render(fmt.Sprintf("the road: %d cells, %d days", len(path)-1, arrive[len(arrive)-1])),
+			dimStyle.Render("deep time stays locked until it returns or is abandoned"),
+		},
+		opts:  []popupOption{{"Depart", popDepart}, {"Cancel", popCancelExp}},
+		cellX: destX, cellY: destY,
+	}
+	m.status = ""
 	m.mapStr = m.buildMap()
 }
 

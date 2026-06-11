@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/hunterjsb/xan-world-sim/internal/db"
 	"github.com/hunterjsb/xan-world-sim/internal/world"
 )
@@ -137,5 +139,70 @@ func TestGridBuf_EmptyViewport(t *testing.T) {
 	gb := BuildGridBuf(nil, nil, nil, 0, 0, -1, -1)
 	if got := gb.Render(0, 0, nil); got != "" {
 		t.Errorf("empty viewport rendered %q, want empty string", got)
+	}
+}
+
+func TestPopupBox_Geometry(t *testing.T) {
+	box := PopupBox("Title", []string{"a body line", "x"}, []string{"Opt A", "Option Bee"}, 1)
+	if len(box) != 2+1+2+1+2 { // borders + title + body + spacer + options
+		t.Fatalf("got %d lines, want 8", len(box))
+	}
+	w := lipgloss.Width(box[0])
+	for i, l := range box {
+		if lw := lipgloss.Width(l); lw != w {
+			t.Errorf("line %d width %d != box width %d (%q)", i, lw, w, stripANSI(l))
+		}
+	}
+	plain := stripANSI(strings.Join(box, "\n"))
+	for _, want := range []string{"Title", "a body line", "▸ Option Bee", "  Opt A", "┌", "└"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("box missing %q:\n%s", want, plain)
+		}
+	}
+}
+
+func TestPopupBox_TruncatesLongContent(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	box := PopupBox("t", []string{long}, nil, -1)
+	for i, l := range box {
+		if w := lipgloss.Width(l); w > popupMaxContentWidth+4 {
+			t.Errorf("line %d visible width %d exceeds max box width", i, w)
+		}
+	}
+	if !strings.Contains(stripANSI(strings.Join(box, "")), "…") {
+		t.Error("truncated content missing ellipsis")
+	}
+}
+
+func TestGridBuf_RenderWithOverlay(t *testing.T) {
+	var cells []db.GetCellsInBoundsRow
+	for y := int64(0); y < 9; y++ {
+		for x := int64(0); x < 30; x++ {
+			cells = append(cells, db.GetCellsInBoundsRow{X: x, Y: y, Kind: "cradle", Elevation: 100})
+		}
+	}
+	gb := BuildGridBuf(cells, nil, nil, 0, 0, 29, 8)
+	box := PopupBox("Hi", []string{"body"}, nil, -1)
+	out := stripANSI(gb.RenderWithOverlay(-1, -1, nil, box))
+	rows := strings.Split(out, "\n")
+	if len(rows) != 9 {
+		t.Fatalf("overlay changed row count: %d", len(rows))
+	}
+	// The box is centered: middle rows contain its borders and text.
+	joined := strings.Join(rows, "\n")
+	for _, want := range []string{"┌", "└", "Hi", "body"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("overlay output missing %q:\n%s", want, joined)
+		}
+	}
+	// Rows outside the box are untouched terrain.
+	if !strings.HasPrefix(rows[0], "...") {
+		t.Errorf("top row should be terrain, got %q", rows[0])
+	}
+	// Every row keeps the grid's visible width.
+	for i, r := range rows {
+		if w := lipgloss.Width(r); w != 30 {
+			t.Errorf("row %d visible width %d, want 30", i, w)
+		}
 	}
 }
