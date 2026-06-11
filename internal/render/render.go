@@ -468,7 +468,9 @@ type CellInfo struct {
 	RiverName string
 
 	// Populated when the cell is a named feature (den/nest/rookery/lake/pass).
-	FeatureName string
+	// FeatureDetail is an optional annotation (e.g., lake bathymetry).
+	FeatureName   string
+	FeatureDetail string
 }
 
 // labelOr returns label unless it's empty, in which case the raw kind
@@ -509,6 +511,9 @@ func InfoPanel(info CellInfo) string {
 		featSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, featSt.Render(info.FeatureName))
 		parts = append(parts, featSt.Render(labelOr(spec.featureLabel, info.Kind)))
+		if info.FeatureDetail != "" {
+			parts = append(parts, dimStyle.Render(info.FeatureDetail))
+		}
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 
 	case info.RiverName != "":

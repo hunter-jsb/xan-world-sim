@@ -67,10 +67,17 @@ type NamedSeat struct {
 // LakeInfo names a lake — one entry per connected cluster of RegionLake
 // cells. X, Y is a representative cell (lex-smallest in the cluster) so
 // downstream consumers can highlight the lake on a map.
+//
+// SurfaceElev is the water surface — the basin's spill level from
+// pit-fill, i.e., the elevation at which the lake overflows into its
+// outlet river. MaxDepth is the deepest submerged point below that
+// surface. Both in meters.
 type LakeInfo struct {
-	ID   int64
-	Name string
-	X, Y int64
+	ID          int64
+	Name        string
+	X, Y        int64
+	SurfaceElev float64
+	MaxDepth    float64
 }
 
 // PassInfo names a mountain pass — a saddle in the ridge that bridges

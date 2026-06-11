@@ -54,8 +54,10 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 		return err
 	}
 	if err := insertAll(ctx, tx, "lake",
-		"INSERT INTO lakes (id, name, x, y) VALUES (?, ?, ?, ?)",
-		w.Lakes, func(l LakeInfo) []any { return []any{l.ID, l.Name, l.X, l.Y} },
+		"INSERT INTO lakes (id, name, x, y, surface_elev, max_depth) VALUES (?, ?, ?, ?, ?, ?)",
+		w.Lakes, func(l LakeInfo) []any {
+			return []any{l.ID, l.Name, l.X, l.Y, l.SurfaceElev, l.MaxDepth}
+		},
 	); err != nil {
 		return err
 	}

@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "0324ccaf763c8e35f075d816f2d4e683d333d32b1795910ae77babd9ab51dbf7"},
-		{KyaNow, 42, "a821c09e2a59ebbec3e5e39947663ffc11c948f786037fe15081c7c112efc991"},
+		{KyaNow, 0, "5963a43da707ba21a9bfc53b2d89093b0ff19ad5e618b8157819e34387cbe9c2"},
+		{KyaNow, 42, "a95799d2bba8b3e84103c9c45777abfbe9398ff9335ce995a349e86096946043"},
 		{KyaOldWorld, 0, "ef89aeb02aecfe9a2d2149fe4feb80dda6d624854f650ddce77078242be87643"},
 		{KyaOldWorld, 42, "858cb945fc3bebe0eef83cf7ec5920d91e12fb89f3103b4b58edfa1c2e0d08be"},
-		{100, 42, "a883b82723bc0f0e9de663147da0fbf8fd098e0fff2cbf338bf60315e9c7f203"}, // mid-cycle
+		{100, 42, "d2650d40ab8289129a779634acd4e2f885b8c613649d7a4049d81493f670454c"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
@@ -120,7 +120,7 @@ func hashWorld(w World) string {
 	copy(lakes, w.Lakes)
 	sort.Slice(lakes, func(i, j int) bool { return lakes[i].ID < lakes[j].ID })
 	for _, l := range lakes {
-		fmt.Fprintf(&b, "L(%d,%d,%d,%s)|", l.ID, l.X, l.Y, l.Name)
+		fmt.Fprintf(&b, "L(%d,%d,%d,%s,%.1f,%.1f)|", l.ID, l.X, l.Y, l.Name, l.SurfaceElev, l.MaxDepth)
 	}
 
 	passes := make([]PassInfo, len(w.Passes))

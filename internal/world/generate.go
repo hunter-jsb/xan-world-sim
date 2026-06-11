@@ -58,7 +58,7 @@ func Generate(seed int64, kya int) World {
 	w.findPasses()
 	w.buildRoads()
 	w.markMarshes()
-	w.nameLakes()
+	w.nameLakes(lakes)
 	return w
 }
 

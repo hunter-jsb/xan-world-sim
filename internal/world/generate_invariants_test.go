@@ -140,6 +140,27 @@ func checkFeatures(t *testing.T, w World) {
 	}
 	for _, l := range w.Lakes {
 		requireRegion("lake", l.X, l.Y, RegionLake)
+		// Bathymetry: the surface is the basin's spill level, so it
+		// must sit above the representative cell's bedrock, and a
+		// detected lake is at least 1m deep (lakeMinDepth).
+		if l.MaxDepth < 1.0 {
+			t.Errorf("lake %q at (%d,%d): max depth %.2fm < 1m detection floor", l.Name, l.X, l.Y, l.MaxDepth)
+		}
+		if cellElev := g.elevAt([2]int{int(l.X), int(l.Y)}); l.SurfaceElev < cellElev {
+			t.Errorf("lake %q at (%d,%d): surface %.1fm below its own bedrock %.1fm", l.Name, l.X, l.Y, l.SurfaceElev, cellElev)
+		}
+	}
+	// The lake carries the river: no river cell may sit on a lake.
+	lakeCells := make(map[[2]int64]bool)
+	for _, rc := range w.Regions {
+		if rc.RegionID == RegionLake {
+			lakeCells[[2]int64{rc.X, rc.Y}] = true
+		}
+	}
+	for _, rc := range w.Rivers {
+		if lakeCells[[2]int64{rc.X, rc.Y}] {
+			t.Errorf("river cell at (%d,%d) overlaps a lake — applyLakes should have absorbed it", rc.X, rc.Y)
+		}
 	}
 	// Counts of flagged cells must match the named-feature lists.
 	var passCells, denCells int

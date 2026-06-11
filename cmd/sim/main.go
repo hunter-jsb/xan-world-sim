@@ -59,7 +59,7 @@ type model struct {
 	cellAt    map[[2]int64]db.GetCellsInBoundsRow
 	riverAt   map[[2]int64]string // coord → river name
 	seatAt    map[[2]int64]db.GetSeatsInBoundsRow
-	featureAt map[[2]int64]string // coord → feature name (kind in cellAt)
+	featureAt map[[2]int64]db.GetNamedFeaturesInBoundsRow
 
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
@@ -276,9 +276,9 @@ func (m *model) buildLookups() {
 	for _, s := range m.data.seats {
 		m.seatAt[[2]int64{s.X, s.Y}] = s
 	}
-	m.featureAt = make(map[[2]int64]string, len(m.data.features))
+	m.featureAt = make(map[[2]int64]db.GetNamedFeaturesInBoundsRow, len(m.data.features))
 	for _, f := range m.data.features {
-		m.featureAt[[2]int64{f.X, f.Y}] = f.Name
+		m.featureAt[[2]int64{f.X, f.Y}] = f
 	}
 	m.dangerMap = buildDangerMap(m.data.features)
 }
@@ -306,8 +306,9 @@ func (m *model) cellInfoAt(x, y int64) render.CellInfo {
 		info.SeatName = s.Name
 		info.SeatPressure = s.Pressure
 	}
-	if fn, ok := m.featureAt[[2]int64{x, y}]; ok {
-		info.FeatureName = fn
+	if f, ok := m.featureAt[[2]int64{x, y}]; ok {
+		info.FeatureName = f.Name
+		info.FeatureDetail = f.Detail
 	}
 	return info
 }

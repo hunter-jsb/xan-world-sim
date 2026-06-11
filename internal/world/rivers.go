@@ -74,10 +74,14 @@ func riverMaxLenFor(gI float64) int {
 // Step 3: trace — cells with accumulation >= threshold are river cells;
 // each headwater becomes its own river_id, terminating where it
 // reaches a previously-traced cell or leaves land.
-// LakeCell is a single cell of a lake — a basin floor in the bedrock
-// where pit-fill detected that flow would have to route uphill.
+// LakeCell is a single submerged cell of a lake — a basin floor that
+// sits below its basin's spill level. Surface is the water surface
+// elevation (the spill level, shared by every cell of the same lake);
+// Depth is how far this cell's bedrock sits below that surface.
 type LakeCell struct {
-	X, Y int64
+	X, Y    int64
+	Surface float64
+	Depth   float64
 }
 
 func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell, []LakeCell) {
@@ -97,69 +101,115 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 	accum := computeAccumulation(elev, bedrock, flowDir)
 	rivers, riverCells := traceRivers(bedrock, flowDir, accum, threshold, maxLen)
 
-	// Lake detection is a SYSTEM, not a hand-tuned filter:
+	// Lake detection is a SYSTEM, grounded directly in the pit-fill
+	// physics — basin-overflow modeling rather than a flow heuristic:
 	//
-	//   geological — a cell is a basin candidate if pit-fill papered
-	//                over a real concavity, i.e., its filled-flow
-	//                target is higher in bedrock than itself. That's
-	//                a direct algorithmic signature of a basin.
-	//   scale — at our grid (each cell ≈ 50km on a Mediterranean-
-	//           scale map), a single-cell candidate is sub-resolution
-	//           noise. Real lakes have to span multiple cells to
-	//           register. Cluster filter: a candidate becomes a lake
-	//           only when it has at least one candidate neighbor.
-	//   physics — frozen vs liquid is decided downstream in classify
+	//   geological — fillPits raises every basin cell to the basin's
+	//                spill level, which is exactly the water surface a
+	//                lake reaches before it overflows. The raised
+	//                amount (filled − bedrock) IS the water depth at
+	//                that cell. depth > 0 means the cell is submerged.
+	//   scale — a basin *qualifies* as a lake only if its deepest
+	//           point exceeds half its zone's noise amplitude
+	//           (zoneAmplitude/2: cradle 25m, foothill 50m). The
+	//           bedrock field is zone base ± amplitude of noise, so
+	//           shallow depressions are expected texture of the noise
+	//           itself; a coherent pit deeper than half the amplitude
+	//           is a real concavity. Once a basin qualifies, its
+	//           *extent* is every submerged cell — shallow margins
+	//           included — because the water surface is the spill
+	//           level regardless of where the deep point sits.
+	//           submergedMin = 1m excludes pit-fill's epsilon grading
+	//           (accumulates to ~0.1m on long flat paths) and
+	//           sub-resolution film. Cluster filter: real lakes span
+	//           multiple cells; 3 cells (~150km²) is the smallest
+	//           cluster that represents a real geographic feature,
+	//           grounded in grid resolution.
+	//   physics — frozen vs liquid is decided downstream in applyLakes
 	//             via Temperature() > 0. We don't filter here by
 	//             climate; we just identify the geological feature.
-	candidates := make(map[[2]int]bool)
+	const submergedMin = 1.0
+	const minLakeClusterCells = 3
+	submerged := make(map[[2]int]bool)
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
 			z := bedrock[y][x].Zone
 			if z != BZCradle && z != BZFoothill {
 				continue
 			}
-			d := flowDir[y][x]
-			if d.dx == 0 && d.dy == 0 {
-				continue
-			}
-			nx, ny := x+d.dx, y+d.dy
-			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
-				continue
-			}
-			if bedrock[ny][nx].Elevation <= 0 {
-				continue
-			}
-			if bedrock[ny][nx].Elevation > bedrock[y][x].Elevation {
-				candidates[[2]int{x, y}] = true
+			if elev[y][x]-bedrock[y][x].Elevation >= submergedMin {
+				submerged[[2]int{x, y}] = true
 			}
 		}
 	}
-	// Connected-component filter: walk candidates with BFS to find
-	// each connected cluster, keep only clusters of meaningful size.
-	// Real lakes span multiple cells; isolated 1-2 cell candidates
-	// are noise at our grid resolution. The threshold of 3 is the
-	// smallest cluster size that represents a real geographic feature
-	// (~150km² at our cell size — comparable to real-world named
-	// lakes), and is grounded in the resolution of the grid, not a
-	// tunable knob.
-	const minLakeClusterCells = 3
 	var seeds [][2]int
-	for c := range candidates {
+	for c := range submerged {
 		seeds = append(seeds, c)
 	}
 	sortYX(seeds)
 
-	// Don't filter river cells just because they're also lake cells.
-	// In real hydrology a river flows *through* a lake; we render the
-	// river layer over the region layer, so a cell that's both will
-	// show as a river — which is geologically correct.
+	// One water body = one surface. Priority-flood assigns every cell
+	// the spill level of *its own* depression, so two adjacent
+	// submerged cells with different fill levels belong to different
+	// basins — separate lakes, possibly terraced down a valley. Flood
+	// with surface continuity: neighbors join only when their fill
+	// levels match within surfTol. Within a single basin the fill is
+	// uniform up to epsilon grading (0.001/cell, ≲0.5m across any
+	// path); across a saddle into another basin it jumps by meters.
+	const surfTol = 0.5
 	var lakes []LakeCell
-	for _, comp := range components(seeds, func(p [2]int) bool { return candidates[p] }) {
+	visited := make(map[[2]int]bool)
+	for _, s := range seeds {
+		if visited[s] {
+			continue
+		}
+		comp := [][2]int{s}
+		visited[s] = true
+		for i := 0; i < len(comp); i++ {
+			head := comp[i]
+			hf := elev[head[1]][head[0]]
+			for _, d := range dirs8 {
+				n := [2]int{head[0] + d[0], head[1] + d[1]}
+				if !submerged[n] || visited[n] {
+					continue
+				}
+				nf := elev[n[1]][n[0]]
+				if nf-hf > surfTol || hf-nf > surfTol {
+					continue // different basin (different water surface)
+				}
+				visited[n] = true
+				comp = append(comp, n)
+			}
+		}
 		if len(comp) < minLakeClusterCells {
 			continue
 		}
+		// The basin qualifies via its deepest cell, judged against
+		// that cell's zone amplitude. Surface = the basin's spill
+		// level (highest fill in the component).
+		var surface, maxDepth, deepAmp float64
 		for _, cell := range comp {
-			lakes = append(lakes, LakeCell{X: int64(cell[0]), Y: int64(cell[1])})
+			if f := elev[cell[1]][cell[0]]; f > surface {
+				surface = f
+			}
+		}
+		for _, cell := range comp {
+			d := surface - bedrock[cell[1]][cell[0]].Elevation
+			if d > maxDepth {
+				maxDepth = d
+				deepAmp = zoneAmplitude(bedrock[cell[1]][cell[0]].Zone)
+			}
+		}
+		if maxDepth < deepAmp/2 {
+			continue // noise-scale depression, not a basin
+		}
+		for _, cell := range comp {
+			lakes = append(lakes, LakeCell{
+				X:       int64(cell[0]),
+				Y:       int64(cell[1]),
+				Surface: surface,
+				Depth:   surface - bedrock[cell[1]][cell[0]].Elevation,
+			})
 		}
 	}
 	return rivers, riverCells, lakes

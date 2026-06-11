@@ -7,25 +7,32 @@ type GetNamedFeaturesInBoundsRow struct {
 	Y    int64  `json:"y"`
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+	// Detail is an optional human-readable annotation for the info
+	// panel — currently only lakes carry one (bathymetry).
+	Detail string `json:"detail"`
 }
 
 // getNamedFeaturesInBounds unions dens, drake nests, wyvern rookeries,
 // lakes, and passes — any named feature that has a procgen name stored
 // separately from the region_cells kind field.
 const getNamedFeaturesInBounds = `
-SELECT x, y, 'den'     AS kind, name FROM dens
+SELECT x, y, 'den'     AS kind, name, '' AS detail FROM dens
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'nest'    AS kind, name FROM drake_nests
+SELECT x, y, 'nest'    AS kind, name, '' AS detail FROM drake_nests
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'rookery' AS kind, name FROM wyvern_rookeries
+SELECT x, y, 'rookery' AS kind, name, '' AS detail FROM wyvern_rookeries
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'lake'    AS kind, name FROM lakes
+SELECT x, y, 'lake'    AS kind, name,
+       printf('surface %dm, depth %dm',
+              CAST(round(surface_elev) AS INTEGER),
+              CAST(round(max_depth) AS INTEGER)) AS detail
+  FROM lakes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'pass'    AS kind, name FROM passes
+SELECT x, y, 'pass'    AS kind, name, '' AS detail FROM passes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 `
 
@@ -44,7 +51,7 @@ func (q *Queries) GetNamedFeaturesInBounds(ctx context.Context, minX, maxX, minY
 	var out []GetNamedFeaturesInBoundsRow
 	for rows.Next() {
 		var r GetNamedFeaturesInBoundsRow
-		if err := rows.Scan(&r.X, &r.Y, &r.Kind, &r.Name); err != nil {
+		if err := rows.Scan(&r.X, &r.Y, &r.Kind, &r.Name, &r.Detail); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
