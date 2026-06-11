@@ -57,7 +57,7 @@ func Generate(seed int64, kya int) World {
 
 	w.findPasses()
 	w.buildRoads()
-	w.markMarshes()
+	w.markMarshes(lakes)
 	w.nameLakes(lakes)
 
 	// Polity layer — runs last because it reads everything: rivers

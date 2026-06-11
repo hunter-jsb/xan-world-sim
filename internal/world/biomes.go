@@ -36,21 +36,46 @@ func (w *World) refineBiomes() {
 	}
 }
 
-// markMarshes converts vegetated lowland directly adjacent to a water
-// body, where temperature is above freezing. The "adjacency to water"
-// criterion is the wet-biome definition; the temperature gate is the
-// same freezing-point used for lakes.
-func (w *World) markMarshes() {
-	waterSet := make(map[[2]int]bool, len(w.Regions)+len(w.Rivers))
+// marshRise is how far above the adjacent water's *surface* land can
+// sit and still be wetland — the seasonal flood-stage / storm-surge
+// scale (real-world river flood stages run 3–8m). Below it the water
+// table reaches the roots; above it the bank is dry land no matter
+// how close the water is.
+const marshRise = 5.0
+
+// markMarshes converts vegetated lowland within flood reach of a water
+// body, where temperature is above freezing. Adjacency alone is not
+// enough — a marsh forms where land sits within marshRise of the
+// adjacent water *surface*: sea level for the seas (climate-driven),
+// the spill surface for lakes (from bathymetry), and the channel's own
+// elevation for rivers. An 80m coastal bluff next to the Brine stays
+// dry; a river-mouth delta floods. The temperature gate is the same
+// freezing-point used for lakes.
+func (w *World) markMarshes(lakes []LakeCell) {
+	seaLevel := w.Climate.SeaLevelDelta
+	surfaceAt := make(map[[2]int]float64, len(lakes))
+	for _, l := range lakes {
+		surfaceAt[[2]int{int(l.X), int(l.Y)}] = l.Surface
+	}
+
+	waterLevel := make(map[[2]int]float64, len(w.Rivers))
 	for _, rc := range w.Regions {
+		p := [2]int{int(rc.X), int(rc.Y)}
 		switch rc.RegionID {
-		case RegionLake, RegionBrine, RegionEastSea:
-			waterSet[[2]int{int(rc.X), int(rc.Y)}] = true
+		case RegionBrine, RegionEastSea:
+			waterLevel[p] = seaLevel
+		case RegionLake:
+			if s, ok := surfaceAt[p]; ok {
+				waterLevel[p] = s
+			}
 		}
 	}
+	g := gridOf(w.Regions)
 	for _, r := range w.Rivers {
-		waterSet[[2]int{int(r.X), int(r.Y)}] = true
+		p := [2]int{int(r.X), int(r.Y)}
+		waterLevel[p] = g.elevAt(p)
 	}
+
 	for i := range w.Regions {
 		rc := &w.Regions[i]
 		switch rc.RegionID {
@@ -58,14 +83,15 @@ func (w *World) markMarshes() {
 		default:
 			continue
 		}
-		adjacent := false
+		flooded := false
 		for _, d := range dirs8 {
-			if waterSet[[2]int{int(rc.X) + d[0], int(rc.Y) + d[1]}] {
-				adjacent = true
+			lvl, ok := waterLevel[[2]int{int(rc.X) + d[0], int(rc.Y) + d[1]}]
+			if ok && rc.Elevation-lvl <= marshRise {
+				flooded = true
 				break
 			}
 		}
-		if !adjacent {
+		if !flooded {
 			continue
 		}
 		lat := Latitude(int(rc.Y), w.LatTop, w.LatBottom)
