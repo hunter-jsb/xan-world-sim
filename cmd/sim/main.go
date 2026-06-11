@@ -321,16 +321,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = "the years resume"
 				}
 			}
-		case "<":
-			if m.simMode && m.simSpeed > 0 {
-				m.simSpeed--
-				m.status = "speed " + simSpeedNames[m.simSpeed]
-			}
-		case ">":
-			if m.simMode && m.simSpeed < len(simSpeeds)-1 {
-				m.simSpeed++
-				m.status = "speed " + simSpeedNames[m.simSpeed]
-			}
 		case "L":
 			m.openChroniclePopup()
 		case "enter":
@@ -355,10 +345,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("jumping to %dkya...", next)
 			return m, m.regen(m.seed, next)
 
-		// Time-scrubbing: kya = kiloyears *before* present.
-		// `]` = forward in time (toward present, kya decreases).
-		// `[` = backward in time (toward LGM, kya increases).
+		// The brackets drive time in both modes. Deep time: scrub kya
+		// (`]` forward toward present, `[` backward toward the LGM,
+		// braces take big steps). Inside a slice the world is pinned —
+		// scrubbing would dissolve it under the sim — so the same keys
+		// throttle the year clock instead: `]`/`[` step the speed,
+		// `}`/`{` snap to the ends of the ladder.
 		case "]":
+			if m.simMode {
+				m.adjustSimSpeed(1)
+				return m, nil
+			}
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -371,6 +368,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "[":
+			if m.simMode {
+				m.adjustSimSpeed(-1)
+				return m, nil
+			}
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -383,6 +384,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("← %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "}", "shift+right":
+			if m.simMode {
+				m.setSimSpeed(len(simSpeeds) - 1)
+				return m, nil
+			}
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -395,6 +400,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("→→ %dkya", next)
 			return m, m.regen(m.seed, next)
 		case "{", "shift+left":
+			if m.simMode {
+				m.setSimSpeed(0)
+				return m, nil
+			}
 			if m.deepTimeLocked() {
 				return m, nil
 			}
@@ -733,7 +742,7 @@ func (m model) View() string {
 			if m.simPaused {
 				pause = "space resume"
 			}
-			hints = append(hints, pause, "< > speed", "L chronicle", "S leave")
+			hints = append(hints, pause, "] [ speed", "L chronicle", "S leave")
 		default:
 			hints = append(hints, "enter inspect")
 		}

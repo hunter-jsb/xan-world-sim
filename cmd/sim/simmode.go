@@ -20,11 +20,35 @@ import (
 // the same history.
 
 // simSpeeds are the wall-clock lengths of one simulated year; names
-// index-match for the header readout.
+// index-match for the header readout. The brackets drive these — the
+// same keys that pan deep time throttle the year clock inside a
+// slice, so "brackets drive time" holds in both modes.
 var (
-	simSpeeds     = []time.Duration{600 * time.Millisecond, 300 * time.Millisecond, 150 * time.Millisecond, 75 * time.Millisecond}
-	simSpeedNames = []string{"½×", "1×", "2×", "4×"}
+	simSpeeds     = []time.Duration{600 * time.Millisecond, 300 * time.Millisecond, 150 * time.Millisecond, 75 * time.Millisecond, 37 * time.Millisecond}
+	simSpeedNames = []string{"½×", "1×", "2×", "4×", "8×"}
 )
+
+// adjustSimSpeed nudges the year clock by one notch (dir ±1).
+func (m *model) adjustSimSpeed(dir int) {
+	next := m.simSpeed + dir
+	switch {
+	case next < 0:
+		m.status = "the years already crawl (" + simSpeedNames[0] + ")"
+		return
+	case next >= len(simSpeeds):
+		m.status = "the years already race (" + simSpeedNames[len(simSpeeds)-1] + ")"
+		return
+	}
+	m.simSpeed = next
+	m.status = "the years run at " + simSpeedNames[m.simSpeed]
+}
+
+// setSimSpeed jumps straight to a notch — the braces snap to the
+// ends of the ladder like they take the big steps in deep time.
+func (m *model) setSimSpeed(i int) {
+	m.simSpeed = i
+	m.status = "the years run at " + simSpeedNames[m.simSpeed]
+}
 
 // simTickMsg advances the year clock; gen guards against stale ticks
 // after the mode is left.
