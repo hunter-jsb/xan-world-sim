@@ -1,0 +1,213 @@
+package world
+
+import (
+	"fmt"
+	"testing"
+)
+
+// TestGenerate_Invariants checks structural properties that must hold
+// for any seed and any kya — complementary to the snapshot test, which
+// pins exact output for a few cases. When worldgen changes
+// intentionally, the snapshot hashes get updated; these invariants
+// should never need to.
+func TestGenerate_Invariants(t *testing.T) {
+	cases := []struct {
+		seed int64
+		kya  int
+	}{
+		{42, KyaNow},
+		{42, KyaOldWorld},
+		{42, 100},
+		{7, 60},
+		{1234567890, KyaNow},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(fmt.Sprintf("seed=%d/kya=%d", c.seed, c.kya), func(t *testing.T) {
+			w := Generate(c.seed, c.kya)
+			checkRegionCells(t, w)
+			checkRivers(t, w)
+			checkSeats(t, w)
+			checkFeatures(t, w)
+			checkRoads(t, w)
+		})
+	}
+}
+
+func checkRegionCells(t *testing.T, w World) {
+	t.Helper()
+	seen := make(map[[2]int64]bool, len(w.Regions))
+	for _, rc := range w.Regions {
+		if !inBounds(int(rc.X), int(rc.Y)) {
+			t.Errorf("region cell (%d,%d) out of bounds", rc.X, rc.Y)
+		}
+		if RegionKind(rc.RegionID) == "" {
+			t.Errorf("region cell (%d,%d) has unknown RegionID %d", rc.X, rc.Y, rc.RegionID)
+		}
+		key := [2]int64{rc.X, rc.Y}
+		if seen[key] {
+			t.Errorf("duplicate region cell at (%d,%d)", rc.X, rc.Y)
+		}
+		seen[key] = true
+	}
+}
+
+func checkRivers(t *testing.T, w World) {
+	t.Helper()
+	ids := make(map[int64]bool, len(w.RiverInfo))
+	for _, ri := range w.RiverInfo {
+		if ids[ri.ID] {
+			t.Errorf("duplicate river ID %d", ri.ID)
+		}
+		ids[ri.ID] = true
+		if ri.Name == "" {
+			t.Errorf("river %d has no name", ri.ID)
+		}
+		if ri.Drainage < 1 {
+			t.Errorf("river %d drainage = %d, want >= 1 (counts itself)", ri.ID, ri.Drainage)
+		}
+	}
+	cellKey := make(map[[3]int64]bool, len(w.Rivers))
+	for _, rc := range w.Rivers {
+		if !ids[rc.RiverID] {
+			t.Errorf("river cell (%d,%d) references unknown river %d", rc.X, rc.Y, rc.RiverID)
+		}
+		k := [3]int64{rc.RiverID, rc.X, rc.Y}
+		if cellKey[k] {
+			t.Errorf("duplicate river cell (%d,%d) on river %d", rc.X, rc.Y, rc.RiverID)
+		}
+		cellKey[k] = true
+	}
+	// At the glacial peak there are no rivers at all.
+	if GlacialIndex(w.Kya) >= 1.0 && len(w.Rivers) != 0 {
+		t.Errorf("gI=1 world has %d river cells, want 0 (water locked in ice)", len(w.Rivers))
+	}
+}
+
+func checkSeats(t *testing.T, w World) {
+	t.Helper()
+	g := gridOf(w.Regions)
+	coords := make(map[[2]int64]bool, len(w.Seats))
+	for _, s := range w.Seats {
+		key := [2]int64{s.X, s.Y}
+		if coords[key] {
+			t.Errorf("two seats share cell (%d,%d)", s.X, s.Y)
+		}
+		coords[key] = true
+		if s.Name == "" {
+			t.Errorf("seat at (%d,%d) has no name", s.X, s.Y)
+		}
+		switch s.Tier {
+		case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach:
+		default:
+			t.Errorf("seat at (%d,%d) has non-seat tier %d", s.X, s.Y, s.Tier)
+		}
+		// The map cell must carry the seat's tier as its region.
+		if got := g.regionAt([2]int{int(s.X), int(s.Y)}); got != s.Tier {
+			t.Errorf("seat at (%d,%d): cell region %d != tier %d", s.X, s.Y, got, s.Tier)
+		}
+		if s.Pressure < 0 || s.Pressure > 12 {
+			t.Errorf("seat at (%d,%d): pressure %g out of [0,12]", s.X, s.Y, s.Pressure)
+		}
+	}
+	// River cells never overlap seats — placeSeats filters them so the
+	// seat glyph isn't painted over.
+	for _, rc := range w.Rivers {
+		if coords[[2]int64{rc.X, rc.Y}] {
+			t.Errorf("river cell at (%d,%d) overlaps a seat", rc.X, rc.Y)
+		}
+	}
+}
+
+func checkFeatures(t *testing.T, w World) {
+	t.Helper()
+	g := gridOf(w.Regions)
+	requireRegion := func(label string, x, y, want int64) {
+		if got := g.regionAt([2]int{int(x), int(y)}); got != want {
+			t.Errorf("%s at (%d,%d): cell region %d, want %d", label, x, y, got, want)
+		}
+	}
+	for _, d := range w.Dens {
+		requireRegion("den", d.X, d.Y, RegionDragonDen)
+	}
+	for _, n := range w.Nests {
+		requireRegion("nest", n.X, n.Y, RegionDrakeNest)
+	}
+	for _, r := range w.Rookeries {
+		requireRegion("rookery", r.X, r.Y, RegionWyvernRookery)
+	}
+	for _, p := range w.Passes {
+		requireRegion("pass", p.X, p.Y, RegionPass)
+	}
+	for _, l := range w.Lakes {
+		requireRegion("lake", l.X, l.Y, RegionLake)
+	}
+	// Counts of flagged cells must match the named-feature lists.
+	var passCells, denCells int
+	for _, rc := range w.Regions {
+		switch rc.RegionID {
+		case RegionPass:
+			passCells++
+		case RegionDragonDen:
+			denCells++
+		}
+	}
+	if passCells != len(w.Passes) {
+		t.Errorf("%d pass cells but %d PassInfo entries", passCells, len(w.Passes))
+	}
+	if denCells != len(w.Dens) {
+		t.Errorf("%d den cells but %d DenInfo entries", denCells, len(w.Dens))
+	}
+}
+
+func checkRoads(t *testing.T, w World) {
+	t.Helper()
+	g := gridOf(w.Regions)
+	cellsByRoad := make(map[int64][]RoadCell)
+	for _, rc := range w.RoadCells {
+		cellsByRoad[rc.RoadID] = append(cellsByRoad[rc.RoadID], rc)
+	}
+	for _, r := range w.Roads {
+		cells := cellsByRoad[r.ID]
+		if len(cells) < 2 {
+			t.Errorf("road %d has %d cells, want >= 2", r.ID, len(cells))
+			continue
+		}
+		// Ord must be 1..n in emission order, each step 8-adjacent.
+		for i, rc := range cells {
+			if rc.Ord != int64(i+1) {
+				t.Errorf("road %d cell %d has ord %d, want %d", r.ID, i, rc.Ord, i+1)
+			}
+			if i > 0 {
+				dx, dy := rc.X-cells[i-1].X, rc.Y-cells[i-1].Y
+				if dx < -1 || dx > 1 || dy < -1 || dy > 1 || (dx == 0 && dy == 0) {
+					t.Errorf("road %d: cells %d→%d not adjacent: (%d,%d)→(%d,%d)",
+						r.ID, i-1, i, cells[i-1].X, cells[i-1].Y, rc.X, rc.Y)
+				}
+			}
+		}
+		first, last := cells[0], cells[len(cells)-1]
+		if first.X != r.FromX || first.Y != r.FromY {
+			t.Errorf("road %d starts at (%d,%d), want From (%d,%d)", r.ID, first.X, first.Y, r.FromX, r.FromY)
+		}
+		if last.X != r.ToX || last.Y != r.ToY {
+			t.Errorf("road %d ends at (%d,%d), want To (%d,%d)", r.ID, last.X, last.Y, r.ToX, r.ToY)
+		}
+		// Every road terminates at a Tributary.
+		if got := g.regionAt([2]int{int(r.ToX), int(r.ToY)}); got != RegionSeat {
+			t.Errorf("road %d terminates on region %d, want Tributary (%d)", r.ID, got, RegionSeat)
+		}
+	}
+	for id := range cellsByRoad {
+		found := false
+		for _, r := range w.Roads {
+			if r.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("road cells reference unknown road %d", id)
+		}
+	}
+}
