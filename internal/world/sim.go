@@ -2,6 +2,7 @@ package world
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 )
 
@@ -25,7 +26,16 @@ import (
 // lineage): targets are a stance shift somewhere on the map every few
 // years, a defection or swearing once or twice a century, and each
 // dragon changing temper a few times per millennium.
+//
+// The engine steps by MONTH; the rates below stay calibrated per
+// YEAR (the scale the dynamics were probed at) and convert at the
+// use site: random-walk σ scales by 1/√12 (a year of monthly steps
+// keeps the same variance as one yearly step), linear rates divide
+// by monthsPerYear, decay takes the twelfth root, and sustained
+// conditions count months (years × 12).
 const (
+	monthsPerYear = 12
+
 	// Each lair's raid activity does a random walk (reflected into
 	// [0, activityMax], starting at 1 = the static generation-time
 	// level). A dragon's walk step of 0.10/yr crosses the 0.5 gap from
@@ -141,6 +151,12 @@ const (
 // resolution is 1000 years, so at year 1000 the sim marks the epoch.
 const sliceYears = 1000
 
+// Monthly derivations of the per-year rates above.
+var (
+	sqrt12          = math.Sqrt(monthsPerYear)
+	grievanceDecayM = math.Pow(grievanceDecay, 1.0/monthsPerYear)
+)
+
 // SimEvent is one entry in a slice's chronicle. Major events are the
 // headlines (membership, ruin, war, epoch); minor ones (stances, lair
 // tempers, raids) stream past. Nothing pauses the simulation — the
@@ -153,6 +169,7 @@ const sliceYears = 1000
 // extra line of impact ("the crown is left with 9 halls").
 type SimEvent struct {
 	Year   int
+	Month  int    // 1–12, the month within Year the event fell on
 	Kind   string // "stance", "secede", "swear", "dissolve", "lair", "epoch", "succession", "ruin", "founding", "war", "raid", "capture", "peace"
 	Text   string
 	Detail string
@@ -186,9 +203,10 @@ var lairTemperText = map[string][4]string{
 
 // Sim is a running simulation over one frozen slice of deep time.
 type Sim struct {
-	W    *World
-	Year int
-	Log  []SimEvent
+	W      *World
+	Year   int // derived: Months / 12 — kept as a field for display and tests
+	Months int // the engine's true clock; one StepMonth = one month
+	Log    []SimEvent
 
 	rng        *rand.Rand
 	capitalIdx int   // index into W.Seats; -1 = no crown this age
@@ -442,7 +460,7 @@ func NewSim(seed int64, kya int) *Sim {
 	for i := range w.Seats {
 		st := w.Seats[i]
 		s.house[i] = generateName(nameSeedForCell(seed, st.X, st.Y) + houseSeedSalt)
-		s.reignEnd[i] = 1 + s.rng.Intn(reignMinYears+reignSpanYears)
+		s.reignEnd[i] = 1 + s.rng.Intn(monthsPerYear*(reignMinYears+reignSpanYears))
 	}
 
 	s.lairs = w.lairSites()
@@ -477,15 +495,21 @@ func (s *Sim) recomputeLairNoted() {
 // point back at it.
 type emitFn func(cause int, e SimEvent) int
 
-// StepYear advances the slice one year and returns the year's events
-// (a view into the chronicle). Order is fixed for determinism:
-// dragons stir, pressure lands, courts drift, stances settle, bonds
-// break, halls fall and rise, wars run, borders re-settle.
-func (s *Sim) StepYear() []SimEvent {
-	s.Year++
+// Month is the current month within the year (1–12).
+func (s *Sim) Month() int { return s.Months%monthsPerYear + 1 }
+
+// StepMonth advances the slice one month and returns the month's
+// events (a view into the chronicle). Order is fixed for
+// determinism: dragons stir, pressure lands, courts drift, stances
+// settle, bonds break, halls fall and rise, wars run, borders
+// re-settle.
+func (s *Sim) StepMonth() []SimEvent {
+	s.Months++
+	s.Year = s.Months / monthsPerYear
 	start := len(s.Log)
 	emit := func(cause int, e SimEvent) int {
 		e.Year = s.Year
+		e.Month = s.Month()
 		e.Cause = cause
 		s.Log = append(s.Log, e)
 		return len(s.Log) - 1
@@ -507,12 +531,12 @@ func (s *Sim) StepYear() []SimEvent {
 	// Borders re-settle after any structural change, and on a steady
 	// cadence regardless — conviction and war fortune move them even
 	// when no hall changed hands.
-	if changed || s.Year%borderRefreshYears == 0 {
+	if changed || s.Months%(borderRefreshYears*monthsPerYear) == 0 {
 		s.reclaimTerritory()
 		s.recomputeBorders()
 	}
 
-	if s.Year == sliceYears {
+	if s.Months == sliceYears*monthsPerYear {
 		var x, y int64
 		if s.capitalIdx >= 0 {
 			x, y = s.W.Seats[s.capitalIdx].X, s.W.Seats[s.capitalIdx].Y
@@ -525,6 +549,19 @@ func (s *Sim) StepYear() []SimEvent {
 
 	return s.Log[start:]
 }
+
+// StepMonths advances n months and returns their combined events.
+func (s *Sim) StepMonths(n int) []SimEvent {
+	start := len(s.Log)
+	for i := 0; i < n; i++ {
+		s.StepMonth()
+	}
+	return s.Log[start:]
+}
+
+// StepYear advances one full year — the granularity the dynamics
+// were calibrated at, and what the tests batch by.
+func (s *Sim) StepYear() []SimEvent { return s.StepMonths(monthsPerYear) }
 
 // realmHallCount counts a realm's living halls.
 func (s *Sim) realmHallCount(id int64) int {
@@ -557,7 +594,7 @@ func lairWalkSigma(kind string) float64 {
 // rest is weather.
 func (s *Sim) stepLairs(emit emitFn) {
 	for i, l := range s.lairs {
-		a := s.activity[i] + s.rng.NormFloat64()*lairWalkSigma(l.Kind)
+		a := s.activity[i] + s.rng.NormFloat64()*lairWalkSigma(l.Kind)/sqrt12
 		if a < 0 {
 			a = -a // reflect at the floor: a sleeping dragon still dreams
 		}
@@ -637,11 +674,11 @@ func (s *Sim) stepAllegiance(emit emitFn) {
 		if s.base[i] < 0 {
 			continue // unreachable: beyond the crown's world
 		}
-		t := s.temperament[i] + s.rng.NormFloat64()*temperamentWalkSigma
+		t := s.temperament[i] + s.rng.NormFloat64()*temperamentWalkSigma/sqrt12
 		s.temperament[i] = min(max(t, -temperamentMax), temperamentMax)
 
 		e := s.base[i] + s.temperament[i] - pressureAllegiancePenalty*st.Pressure
-		a := st.Allegiance + allegianceDrift*(e-st.Allegiance) + s.rng.NormFloat64()*allegianceNoise
+		a := st.Allegiance + allegianceDrift/monthsPerYear*(e-st.Allegiance) + s.rng.NormFloat64()*allegianceNoise/sqrt12
 		st.Allegiance = min(max(a, 0), 1)
 
 		if next := stickyStance(st.Allegiance, s.stance[i]); next != s.stance[i] {
@@ -664,11 +701,11 @@ func (s *Sim) stepAllegiance(emit emitFn) {
 // line *on the throne* ripples doubt through every sworn hall.
 func (s *Sim) stepSuccessions(emit emitFn) {
 	for i := range s.W.Seats {
-		if s.Year < s.reignEnd[i] {
+		if s.Months < s.reignEnd[i] {
 			continue
 		}
 		st := &s.W.Seats[i]
-		s.reignEnd[i] = s.Year + reignMinYears + s.rng.Intn(reignSpanYears)
+		s.reignEnd[i] = s.Months + monthsPerYear*reignMinYears + s.rng.Intn(monthsPerYear*reignSpanYears)
 		s.temperament[i] = (s.rng.Float64()*2 - 1) * temperamentMax
 		s.lowStreak[i], s.highStreak[i] = 0, 0
 		if s.rng.Float64() >= successionCrisisChance {
@@ -719,7 +756,7 @@ func (s *Sim) stepMembership(emit emitFn) bool {
 			} else {
 				s.lowStreak[i] = 0
 			}
-			if s.lowStreak[i] >= defectYears {
+			if s.lowStreak[i] >= defectYears*monthsPerYear {
 				s.lowStreak[i] = 0
 				s.secede(i, emit)
 				changed = true
@@ -731,7 +768,7 @@ func (s *Sim) stepMembership(emit emitFn) bool {
 			} else {
 				s.highStreak[i] = 0
 			}
-			if s.highStreak[i] >= swearYears {
+			if s.highStreak[i] >= swearYears*monthsPerYear {
 				s.highStreak[i] = 0
 				s.swear(i, emit)
 				changed = true
@@ -910,7 +947,7 @@ func (s *Sim) stepRuins(emit emitFn) bool {
 		} else {
 			s.ruinStreak[i] = 0
 		}
-		if s.ruinStreak[i] >= ruinYears {
+		if s.ruinStreak[i] >= ruinYears*monthsPerYear {
 			doomed = append(doomed, i)
 		}
 	}
@@ -956,7 +993,7 @@ func (s *Sim) stepFoundings(emit emitFn) bool {
 	}
 	var winners []int64
 	for _, r := range s.W.Realms {
-		if s.rng.Float64() < foundChance {
+		if s.rng.Float64() < foundChance/monthsPerYear {
 			winners = append(winners, r.ID)
 		}
 	}
@@ -1105,7 +1142,7 @@ func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver bool, ru
 	s.ruinStreak = append(s.ruinStreak, 0)
 	s.house = append(s.house, generateName(s.rng.Int63()))
 	s.houseSince = append(s.houseSince, s.Year)
-	s.reignEnd = append(s.reignEnd, s.Year+reignMinYears+s.rng.Intn(reignSpanYears))
+	s.reignEnd = append(s.reignEnd, s.Months+monthsPerYear*reignMinYears+s.rng.Intn(monthsPerYear*reignSpanYears))
 	s.seatCrisisIdx = append(s.seatCrisisIdx, -1)
 	s.recomputeLairNoted()
 
@@ -1221,9 +1258,9 @@ func (s *Sim) stepWars(emit emitFn) bool {
 		heat[k] = true
 	}
 	for _, k := range sortedPairs(heat) {
-		g := s.grievance[k] * grievanceDecay
+		g := s.grievance[k] * grievanceDecayM
 		if n := s.borders[k]; n > 0 {
-			g += borderFriction * min(float64(n)/10, 1)
+			g += borderFriction / monthsPerYear * min(float64(n)/10, 1)
 		}
 		if g < 0.01 {
 			delete(s.grievance, k)
@@ -1251,7 +1288,7 @@ func (s *Sim) stepWars(emit emitFn) bool {
 			continue
 		}
 		g := s.grievance[k]
-		if g <= 0 || s.rng.Float64() >= warChance*g {
+		if g <= 0 || s.rng.Float64() >= warChance/monthsPerYear*g {
 			continue
 		}
 		a, b := k[0], k[1]
@@ -1267,7 +1304,7 @@ func (s *Sim) stepWars(emit emitFn) bool {
 			Text: fmt.Sprintf("war — %s marches on %s", s.realmTitle(a), s.realmTitle(b)),
 			Detail: fmt.Sprintf("strength %.1f against %.1f",
 				s.realmStrength(a), s.realmStrength(b))})
-		s.wars = append(s.wars, war{A: a, B: b, Start: s.Year, declIdx: declIdx})
+		s.wars = append(s.wars, war{A: a, B: b, Start: s.Months, declIdx: declIdx})
 	}
 
 	// Campaigns.
@@ -1280,13 +1317,13 @@ func (s *Sim) stepWars(emit emitFn) bool {
 			// captured whole) — the war ends with it.
 			emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
 				Text:   "the war ends — one of its banners is no more",
-				Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
+				Detail: fmt.Sprintf("after %d years", (s.Months-w.Start+monthsPerYear-1)/monthsPerYear)})
 			continue
 		}
 		strA, strB := s.realmStrength(w.A), s.realmStrength(w.B)
-		w.Score += warDriftK*(strA-strB)/(strA+strB) + s.rng.NormFloat64()*warNoise
+		w.Score += warDriftK/monthsPerYear*(strA-strB)/(strA+strB) + s.rng.NormFloat64()*warNoise/sqrt12
 
-		if age := s.Year - w.Start; age > 0 && age%raidPeriod == 0 {
+		if age := s.Months - w.Start; age > 0 && age%(raidPeriod*monthsPerYear) == 0 {
 			defender, attacker := w.B, w.A
 			if w.Score < 0 {
 				defender, attacker = w.A, w.B
@@ -1299,7 +1336,7 @@ func (s *Sim) stepWars(emit emitFn) bool {
 				}
 				emit(w.declIdx, SimEvent{Kind: "raid", X: st.X, Y: st.Y,
 					Text:   fmt.Sprintf("the war reaches %s — fields burn outside its walls", st.Name),
-					Detail: fmt.Sprintf("year %d of the war", age)})
+					Detail: fmt.Sprintf("year %d of the war", (age+monthsPerYear-1)/monthsPerYear)})
 			}
 		}
 
@@ -1318,7 +1355,7 @@ func (s *Sim) stepWars(emit emitFn) bool {
 					Text: fmt.Sprintf("%s falls to %s — House %s bends the knee",
 						st.Name, s.realmTitle(winner), s.house[ti]),
 					Detail: fmt.Sprintf("year %d of the war; %s now counts %d halls",
-						s.Year-w.Start, s.realmTitle(winner), s.realmHallCount(winner))})
+						(s.Months-w.Start+monthsPerYear-1)/monthsPerYear, s.realmTitle(winner), s.realmHallCount(winner))})
 				s.grievanceSrc[pairKey(loser, winner)] = idx
 				changed = true
 				s.maybeDissolve(old, emit, idx)
@@ -1328,16 +1365,16 @@ func (s *Sim) stepWars(emit emitFn) bool {
 				s.grievance[pairKey(w.A, w.B)] *= 0.5
 				emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
 					Text:   fmt.Sprintf("peace between %s and %s — the borders rest", nameA, nameB),
-					Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
+					Detail: fmt.Sprintf("after %d years", (s.Months-w.Start+monthsPerYear-1)/monthsPerYear)})
 				continue
 			}
 		}
 
-		if s.Year-w.Start >= maxWarYears {
+		if s.Months-w.Start >= maxWarYears*monthsPerYear {
 			s.grievance[pairKey(w.A, w.B)] *= 0.5
 			emit(w.declIdx, SimEvent{Kind: "peace", Major: true,
 				Text:   fmt.Sprintf("peace between %s and %s — both sides are spent", nameA, nameB),
-				Detail: fmt.Sprintf("after %d years", s.Year-w.Start)})
+				Detail: fmt.Sprintf("after %d years", (s.Months-w.Start+monthsPerYear-1)/monthsPerYear)})
 			continue
 		}
 		kept = append(kept, w)

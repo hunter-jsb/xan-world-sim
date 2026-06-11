@@ -738,7 +738,11 @@ func (m model) View() string {
 		if m.simPaused {
 			run = "‖"
 		}
-		title += dimStyle.Render("   sim: ") + seedStyle.Render(fmt.Sprintf("year %d %s%s", m.sim.Year, run, simSpeedNames[m.simSpeed]))
+		clock := fmt.Sprintf("year %d", m.sim.Year)
+		if simSpeeds[m.simSpeed].months < monthsPerYearUI {
+			clock = fmt.Sprintf("year %d m%02d", m.sim.Year, m.sim.Month())
+		}
+		title += dimStyle.Render("   sim: ") + seedStyle.Render(fmt.Sprintf("%s %s%s", clock, run, simSpeeds[m.simSpeed].name))
 	}
 	if m.seed != 0 {
 		title += dimStyle.Render("   seed: ") + seedStyle.Render(fmt.Sprintf("%d", m.seed))

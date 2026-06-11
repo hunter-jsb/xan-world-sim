@@ -10,7 +10,7 @@ import (
 // realms, territory, and the chronicle — at full float precision.
 func simFingerprint(s *Sim) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "year=%d\n", s.Year)
+	fmt.Fprintf(&b, "year=%d months=%d\n", s.Year, s.Months)
 	for i, st := range s.W.Seats {
 		fmt.Fprintf(&b, "seat %s a=%v p=%v r=%d house=%s since=%d\n",
 			st.Name, st.Allegiance, st.Pressure, st.RealmID, s.house[i], s.houseSince[i])
@@ -24,8 +24,8 @@ func simFingerprint(s *Sim) string {
 	}
 	fmt.Fprintf(&b, "patches=%d\n", len(s.patches))
 	for _, e := range s.Log {
-		fmt.Fprintf(&b, "y%d [%s] %s | %s @(%d,%d) major=%v cause=%d\n",
-			e.Year, e.Kind, e.Text, e.Detail, e.X, e.Y, e.Major, e.Cause)
+		fmt.Fprintf(&b, "y%d.m%d [%s] %s | %s @(%d,%d) major=%v cause=%d\n",
+			e.Year, e.Month, e.Kind, e.Text, e.Detail, e.X, e.Y, e.Major, e.Cause)
 	}
 	return b.String()
 }
@@ -347,8 +347,8 @@ func TestSim_HeritageLines(t *testing.T) {
 				t.Errorf("seat %d changed house but houseSince is 0", i)
 			}
 		}
-		if s.reignEnd[i] <= s.Year {
-			t.Errorf("seat %d reign ended in the past (%d ≤ %d)", i, s.reignEnd[i], s.Year)
+		if s.reignEnd[i] <= s.Months {
+			t.Errorf("seat %d reign ended in the past (month %d ≤ %d)", i, s.reignEnd[i], s.Months)
 		}
 	}
 	if changed == 0 {

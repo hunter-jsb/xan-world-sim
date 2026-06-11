@@ -19,14 +19,33 @@ import (
 // is ephemeral and deterministic, so leaving and re-entering replays
 // the same history.
 
-// simSpeeds are the wall-clock lengths of one simulated year; names
-// index-match for the header readout. The brackets drive these — the
-// same keys that pan deep time throttle the year clock inside a
-// slice, so "brackets drive time" holds in both modes.
-var (
-	simSpeeds     = []time.Duration{600 * time.Millisecond, 300 * time.Millisecond, 150 * time.Millisecond, 75 * time.Millisecond, 37 * time.Millisecond}
-	simSpeedNames = []string{"½×", "1×", "2×", "4×", "8×"}
-)
+// simSpeed is one notch on the time ladder: how many engine months a
+// tick advances, and how long a tick takes. The engine always steps
+// monthly; slow notches show single moons and seasons, fast notches
+// batch whole years per tick. The brackets drive these — the same
+// keys that pan deep time throttle the clock inside a slice, so
+// "brackets drive time" holds in both modes.
+type simSpeed struct {
+	months int
+	dur    time.Duration
+	name   string
+}
+
+var simSpeeds = []simSpeed{
+	{1, 400 * time.Millisecond, "moon"},
+	{3, 400 * time.Millisecond, "season"},
+	{12, 600 * time.Millisecond, "½×"},
+	{12, 300 * time.Millisecond, "1×"},
+	{12, 150 * time.Millisecond, "2×"},
+	{12, 75 * time.Millisecond, "4×"},
+	{12, 37 * time.Millisecond, "8×"},
+}
+
+// defaultSimSpeed is the 1× notch — a year every 300ms.
+const defaultSimSpeed = 3
+
+// monthsPerYearUI mirrors the engine's month granularity for display.
+const monthsPerYearUI = 12
 
 // adjustSimSpeed nudges the year clock by one notch (dir ±1) and
 // returns the message to toast.
@@ -34,19 +53,19 @@ func (m *model) adjustSimSpeed(dir int) string {
 	next := m.simSpeed + dir
 	switch {
 	case next < 0:
-		return "the years already crawl (" + simSpeedNames[0] + ")"
+		return "time already crawls moon by moon"
 	case next >= len(simSpeeds):
-		return "the years already race (" + simSpeedNames[len(simSpeeds)-1] + ")"
+		return "the years already race (" + simSpeeds[len(simSpeeds)-1].name + ")"
 	}
 	m.simSpeed = next
-	return "the years run at " + simSpeedNames[m.simSpeed]
+	return "time runs at " + simSpeeds[m.simSpeed].name
 }
 
 // setSimSpeed jumps straight to a notch — the braces snap to the
 // ends of the ladder like they take the big steps in deep time.
 func (m *model) setSimSpeed(i int) string {
 	m.simSpeed = i
-	return "the years run at " + simSpeedNames[m.simSpeed]
+	return "time runs at " + simSpeeds[m.simSpeed].name
 }
 
 // simTickMsg advances the year clock; gen guards against stale ticks
@@ -82,7 +101,7 @@ func (m *model) startSim(sim *world.Sim) tea.Cmd {
 	m.simMode = true
 	m.sim = sim
 	m.simPaused = false
-	m.simSpeed = 1
+	m.simSpeed = defaultSimSpeed
 	m.stashDeepTime()
 	m.preSimPolitical = m.politicalMode
 	m.politicalMode = true
@@ -135,7 +154,7 @@ func (m *model) stashDeepTime() {
 // simTickCmd schedules the next simulated year at the current speed.
 func (m *model) simTickCmd() tea.Cmd {
 	gen := m.simGen
-	return tea.Tick(simSpeeds[m.simSpeed], func(time.Time) tea.Msg { return simTickMsg{gen: gen} })
+	return tea.Tick(simSpeeds[m.simSpeed].dur, func(time.Time) tea.Msg { return simTickMsg{gen: gen} })
 }
 
 // simPing is one alarm mark on the map: an event happened at (x, y)
@@ -168,7 +187,7 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 		return nil // stale tick from a left simulation
 	}
 	if m.popup == nil && m.exp == nil && !m.simPaused && m.sim != nil {
-		events := m.sim.StepYear()
+		events := m.sim.StepMonths(simSpeeds[m.simSpeed].months)
 		var lastMajor *world.SimEvent
 		minor := ""
 		for i := range events {
@@ -199,13 +218,17 @@ func (m *model) handleSimTick(msg simTickMsg) tea.Cmd {
 			m.simNote = lastMajor.Text
 			m.simNoteUntil = m.sim.Year + newsYears
 		}
+		clock := fmt.Sprintf("year %d", m.sim.Year)
+		if simSpeeds[m.simSpeed].months < monthsPerYearUI {
+			clock = fmt.Sprintf("year %d, moon %d", m.sim.Year, m.sim.Month())
+		}
 		switch {
 		case m.simNote != "" && m.sim.Year < m.simNoteUntil:
-			m.status = fmt.Sprintf("year %d ⚑ %s", m.sim.Year, m.simNote)
+			m.status = clock + " ⚑ " + m.simNote
 		case minor != "":
-			m.status = fmt.Sprintf("year %d — %s", m.sim.Year, minor)
+			m.status = clock + " — " + minor
 		default:
-			m.status = fmt.Sprintf("year %d", m.sim.Year)
+			m.status = clock
 		}
 		m.mapStr = m.buildMap()
 	}
@@ -379,7 +402,7 @@ func (m *model) openEventDetailPopup(idx int) {
 	}
 	opts = append(opts, popupOption{label: "Back to chronicle", action: popChronicle})
 	m.popup = &popupState{
-		title: fmt.Sprintf("year %d — %s", e.Year, e.Kind),
+		title: fmt.Sprintf("year %d, moon %d — %s", e.Year, e.Month, e.Kind),
 		body:  body,
 		opts:  opts,
 		cellX: e.X, cellY: e.Y,
