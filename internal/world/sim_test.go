@@ -11,8 +11,9 @@ import (
 func simFingerprint(s *Sim) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "year=%d\n", s.Year)
-	for _, st := range s.W.Seats {
-		fmt.Fprintf(&b, "seat %s a=%v p=%v r=%d\n", st.Name, st.Allegiance, st.Pressure, st.RealmID)
+	for i, st := range s.W.Seats {
+		fmt.Fprintf(&b, "seat %s a=%v p=%v r=%d house=%s since=%d\n",
+			st.Name, st.Allegiance, st.Pressure, st.RealmID, s.house[i], s.houseSince[i])
 	}
 	for _, r := range s.W.Realms {
 		fmt.Fprintf(&b, "realm %d %s crown=%v\n", r.ID, r.Name, r.IsCrown)
@@ -123,7 +124,9 @@ func TestSim_NoCrownAge(t *testing.T) {
 	}
 	for y := 0; y < 300; y++ {
 		for _, e := range s.StepYear() {
-			if e.Kind != "lair" {
+			// Lairs stir and lords die under the ice too — but no
+			// crown politics: no stances, no oaths, no realms moving.
+			if e.Kind != "lair" && e.Kind != "succession" {
 				t.Errorf("year %d: %s event in a crownless age: %s", e.Year, e.Kind, e.Text)
 			}
 		}
@@ -134,6 +137,48 @@ func TestSim_NoCrownAge(t *testing.T) {
 		}
 	}
 	checkPolity(t, *s.W)
+}
+
+// TestSim_HeritageLines: lines fail only by crisis (every succession
+// event is a rupture), the failed house is replaced, reigns always
+// extend into the future, and a crownless age still buries its lords.
+func TestSim_HeritageLines(t *testing.T) {
+	s := NewSim(42, 0)
+	founding := make([]string, len(s.house))
+	copy(founding, s.house)
+	crises := 0
+	for y := 0; y < 1000; y++ {
+		for _, e := range s.StepYear() {
+			if e.Kind != "succession" {
+				continue
+			}
+			crises++
+			if !strings.Contains(e.Text, "the line of") {
+				t.Errorf("succession event without a failed line: %s", e.Text)
+			}
+		}
+	}
+	if crises == 0 {
+		t.Error("no succession crises in a millennium — the lines are immortal")
+	}
+	changed := 0
+	for i := range s.house {
+		if s.house[i] != founding[i] {
+			changed++
+			if s.houseSince[i] == 0 {
+				t.Errorf("seat %d changed house but houseSince is 0", i)
+			}
+		}
+		if s.reignEnd[i] <= s.Year {
+			t.Errorf("seat %d reign ended in the past (%d ≤ %d)", i, s.reignEnd[i], s.Year)
+		}
+	}
+	if changed == 0 {
+		t.Error("crises occurred but no house ever changed")
+	}
+	if changed > crises {
+		t.Errorf("%d houses changed but only %d crises — houses must change only by crisis", changed, crises)
+	}
 }
 
 // TestSim_PressureMatchesGenAtRest pins the gen↔sim identity: with

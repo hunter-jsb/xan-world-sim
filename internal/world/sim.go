@@ -63,6 +63,22 @@ const (
 	// margin before the seat's reputation actually changes.
 	stanceHysteresis = 0.015
 
+	// Reigns: each hall's lord rules 8–39 years; successions re-roll
+	// the seat's temperament (a new lord is a new disposition) and
+	// reset its oath streaks (loyalty is sworn to a person). Smooth
+	// successions pass unchronicled; a failed line (crisis) shakes the
+	// hall's allegiance, and a contested *crown* succession ripples
+	// doubt through every sworn hall.
+	reignMinYears          = 8
+	reignSpanYears         = 32
+	successionCrisisChance = 0.12
+	successionCrisisDoubt  = 0.08
+	crownCrisisDoubt       = 0.04
+
+	// houseSeedSalt offsets a seat's house-name stream from its own
+	// name stream (both derive from the same cell coordinates).
+	houseSeedSalt = 7331
+
 	// Membership changes demand sustained conviction, not a bad year.
 	// Both thresholds mirror crownThreshold — the same boundary
 	// formRealms partitions by at generation — offset by a hysteresis
@@ -130,6 +146,17 @@ type Sim struct {
 	lowStreak   []int // consecutive years in the autonomous band (crown seats)
 	highStreak  []int // consecutive years above swearThreshold (independents)
 
+	// Heritage lines, indexed like W.Seats: the ruling house of each
+	// hall, the year it took the hall, and the year the current lord's
+	// reign ends.
+	house      []string
+	houseSince []int
+	reignEnd   []int
+
+	// lineage records the origin of realms founded during the slice
+	// (realm ID → chronicle note); realms that predate it have none.
+	lineage map[int64]string
+
 	// Per-lair state, indexed like lairs (all three tiers flattened).
 	lairs     []lairSite
 	activity  []float64 // raid-activity multiplier in [0, activityMax]
@@ -149,6 +176,23 @@ func (s *Sim) LairActivity(x, y int64) float64 {
 		}
 	}
 	return 1
+}
+
+// HouseAt returns the ruling house of the seat at (x, y) and the year
+// it took the hall ("" if no seat is there).
+func (s *Sim) HouseAt(x, y int64) (string, int) {
+	for i := range s.W.Seats {
+		if s.W.Seats[i].X == x && s.W.Seats[i].Y == y {
+			return s.house[i], s.houseSince[i]
+		}
+	}
+	return "", 0
+}
+
+// RealmLineage returns the chronicle's origin note for a realm founded
+// during this slice ("" for realms that predate it).
+func (s *Sim) RealmLineage(realmID int64) string {
+	return s.lineage[realmID]
 }
 
 // NewSim generates the slice's world and prepares it for stepping.
@@ -206,6 +250,19 @@ func NewSim(seed int64, kya int) *Sim {
 		}
 	}
 
+	// Heritage lines: each hall's founding house is as deterministic as
+	// its name (same cell coordinates, salted stream); the sitting
+	// lords are mid-reign when the slice opens.
+	s.house = make([]string, len(w.Seats))
+	s.houseSince = make([]int, len(w.Seats))
+	s.reignEnd = make([]int, len(w.Seats))
+	s.lineage = make(map[int64]string)
+	for i := range w.Seats {
+		st := w.Seats[i]
+		s.house[i] = generateName(nameSeedForCell(seed, st.X, st.Y) + houseSeedSalt)
+		s.reignEnd[i] = 1 + s.rng.Intn(reignMinYears+reignSpanYears)
+	}
+
 	s.lairs = w.lairSites()
 	s.activity = make([]float64, len(s.lairs))
 	s.lairState = make([]int, len(s.lairs))
@@ -236,6 +293,7 @@ func (s *Sim) StepYear() []SimEvent {
 
 	s.stepLairs(emit)
 	s.stepAllegiance(emit)
+	s.stepSuccessions(emit)
 	changed := s.stepMembership(emit)
 	if changed {
 		s.W.Territory = s.W.Territory[:0]
@@ -364,6 +422,46 @@ func (s *Sim) stepAllegiance(emit func(SimEvent)) {
 	}
 }
 
+// stepSuccessions turns over the generations. When a reign ends the
+// heir takes the hall: temperament re-rolls (a new lord is a new
+// disposition) and oath streaks reset (loyalty is sworn to a person,
+// not a map). Smooth successions pass unchronicled — the record keeps
+// ruptures: a failed line shakes its hall's allegiance, and a failed
+// line *on the throne* ripples doubt through every sworn hall.
+func (s *Sim) stepSuccessions(emit func(SimEvent)) {
+	for i := range s.W.Seats {
+		if s.Year < s.reignEnd[i] {
+			continue
+		}
+		st := &s.W.Seats[i]
+		s.reignEnd[i] = s.Year + reignMinYears + s.rng.Intn(reignSpanYears)
+		s.temperament[i] = (s.rng.Float64()*2 - 1) * temperamentMax
+		s.lowStreak[i], s.highStreak[i] = 0, 0
+		if s.rng.Float64() >= successionCrisisChance {
+			continue // the heir is sound; the hall barely notices
+		}
+		old := s.house[i]
+		s.house[i] = generateName(s.rng.Int63())
+		s.houseSince[i] = s.Year
+		if i == s.capitalIdx {
+			for j := range s.W.Seats {
+				if j != s.capitalIdx && s.W.Seats[j].RealmID == s.crownID && s.base[j] >= 0 {
+					s.W.Seats[j].Allegiance = max(s.W.Seats[j].Allegiance-crownCrisisDoubt, 0)
+				}
+			}
+			emit(SimEvent{Kind: "succession", Major: true, X: st.X, Y: st.Y,
+				Text: fmt.Sprintf("the line of %s fails on the throne of %s — House %s takes the crown, and doubt ripples outward",
+					old, st.Name, s.house[i])})
+			continue
+		}
+		if s.base[i] >= 0 {
+			st.Allegiance = max(st.Allegiance-successionCrisisDoubt, 0)
+		}
+		emit(SimEvent{Kind: "succession", X: st.X, Y: st.Y,
+			Text: fmt.Sprintf("the line of %s fails in %s — House %s takes the hall", old, st.Name, s.house[i])})
+	}
+}
+
 // stepMembership breaks and forges realm bonds: crown seats that have
 // sat below defectThreshold for defectYears renounce; independents
 // that have held above swearThreshold for swearYears bend the knee.
@@ -453,6 +551,14 @@ func (s *Sim) secede(i int, emit func(SimEvent)) {
 		SeatX: st.X,
 		SeatY: st.Y,
 	})
+	var crownName string
+	for _, r := range s.W.Realms {
+		if r.ID == s.crownID {
+			crownName = r.Name
+		}
+	}
+	s.lineage[s.nextRealmID] = fmt.Sprintf("sundered from the crown of %s in year %d, under House %s",
+		crownName, s.Year, s.house[i])
 	s.nextRealmID++
 	emit(SimEvent{Kind: "secede", Major: true, X: st.X, Y: st.Y,
 		Text: fmt.Sprintf("%s renounces the crown and stands alone — the league of %s", st.Name, st.Name)})

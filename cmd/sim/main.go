@@ -937,6 +937,22 @@ func (m *model) openCellPopup() {
 			}
 			add("%s", line)
 		}
+		// Heritage lines live only inside a running slice — deep time
+		// doesn't track who reigns.
+		if m.simMode && m.sim != nil {
+			if h, since := m.sim.HouseAt(m.curX, m.curY); h != "" {
+				if since > 0 {
+					add("house: House %s (took the hall in year %d)", h, since)
+				} else {
+					add("house: House %s (an old line)", h)
+				}
+			}
+			if info.RealmID != 0 {
+				if l := m.sim.RealmLineage(info.RealmID); l != "" {
+					add("%s", l)
+				}
+			}
+		}
 		if info.RiverName != "" {
 			add("river: %s", info.RiverName)
 		}
