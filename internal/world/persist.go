@@ -8,8 +8,8 @@ import (
 )
 
 // Persist writes the world to the database in a single transaction:
-// truncates region_cells + river_cells, inserts everything fresh,
-// records the seed in world_meta. Idempotent.
+// truncates all world tables, inserts everything fresh, records the
+// seed and climate state in world_meta. Idempotent.
 func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -18,184 +18,89 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	defer tx.Rollback()
 
 	// SQLite FKs are off by default so "DELETE rivers cascades" can't
-	// be relied on. Be explicit: drain river_cells first, then rivers.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM river_cells"); err != nil {
-		return fmt.Errorf("clear river_cells: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM rivers"); err != nil {
-		return fmt.Errorf("clear rivers: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM region_cells"); err != nil {
-		return fmt.Errorf("clear regions: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM seats"); err != nil {
-		return fmt.Errorf("clear seats: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM lakes"); err != nil {
-		return fmt.Errorf("clear lakes: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM passes"); err != nil {
-		return fmt.Errorf("clear passes: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM road_cells"); err != nil {
-		return fmt.Errorf("clear road_cells: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM roads"); err != nil {
-		return fmt.Errorf("clear roads: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM dens"); err != nil {
-		return fmt.Errorf("clear dens: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM drake_nests"); err != nil {
-		return fmt.Errorf("clear drake_nests: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM wyvern_rookeries"); err != nil {
-		return fmt.Errorf("clear wyvern_rookeries: %w", err)
-	}
-
-	rcStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare region: %w", err)
-	}
-	defer rcStmt.Close()
-	for _, c := range w.Regions {
-		if _, err := rcStmt.ExecContext(ctx, c.RegionID, c.X, c.Y, c.Elevation); err != nil {
-			return fmt.Errorf("insert region cell: %w", err)
+	// be relied on. Be explicit, child tables before their parents.
+	for _, table := range []string{
+		"river_cells", "rivers", "region_cells", "seats", "lakes",
+		"passes", "road_cells", "roads", "dens", "drake_nests",
+		"wyvern_rookeries",
+	} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			return fmt.Errorf("clear %s: %w", table, err)
 		}
 	}
 
-	riverStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO rivers (id, name, drainage) VALUES (?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare river info: %w", err)
+	if err := insertAll(ctx, tx, "region cell",
+		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)",
+		w.Regions, func(c RegionCell) []any { return []any{c.RegionID, c.X, c.Y, c.Elevation} },
+	); err != nil {
+		return err
 	}
-	defer riverStmt.Close()
-	for _, r := range w.RiverInfo {
-		if _, err := riverStmt.ExecContext(ctx, r.ID, r.Name, r.Drainage); err != nil {
-			return fmt.Errorf("insert river info: %w", err)
-		}
+	if err := insertAll(ctx, tx, "river info",
+		"INSERT INTO rivers (id, name, drainage) VALUES (?, ?, ?)",
+		w.RiverInfo, func(r River) []any { return []any{r.ID, r.Name, r.Drainage} },
+	); err != nil {
+		return err
 	}
-
-	rvStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO river_cells (river_id, x, y, ord) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare river: %w", err)
+	if err := insertAll(ctx, tx, "river cell",
+		"INSERT INTO river_cells (river_id, x, y, ord) VALUES (?, ?, ?, ?)",
+		w.Rivers, func(r RiverCell) []any { return []any{r.RiverID, r.X, r.Y, r.Ord} },
+	); err != nil {
+		return err
 	}
-	defer rvStmt.Close()
-	for _, r := range w.Rivers {
-		if _, err := rvStmt.ExecContext(ctx, r.RiverID, r.X, r.Y, r.Ord); err != nil {
-			return fmt.Errorf("insert river cell: %w", err)
-		}
+	if err := insertAll(ctx, tx, "seat",
+		"INSERT INTO seats (x, y, tier_id, name, pressure) VALUES (?, ?, ?, ?, ?)",
+		w.Seats, func(s NamedSeat) []any { return []any{s.X, s.Y, s.Tier, s.Name, s.Pressure} },
+	); err != nil {
+		return err
 	}
-
-	seatStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO seats (x, y, tier_id, name, pressure) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare seat: %w", err)
+	if err := insertAll(ctx, tx, "lake",
+		"INSERT INTO lakes (id, name, x, y) VALUES (?, ?, ?, ?)",
+		w.Lakes, func(l LakeInfo) []any { return []any{l.ID, l.Name, l.X, l.Y} },
+	); err != nil {
+		return err
 	}
-	defer seatStmt.Close()
-	for _, s := range w.Seats {
-		if _, err := seatStmt.ExecContext(ctx, s.X, s.Y, s.Tier, s.Name, s.Pressure); err != nil {
-			return fmt.Errorf("insert seat: %w", err)
-		}
+	if err := insertAll(ctx, tx, "pass",
+		"INSERT INTO passes (id, name, x, y) VALUES (?, ?, ?, ?)",
+		w.Passes, func(p PassInfo) []any { return []any{p.ID, p.Name, p.X, p.Y} },
+	); err != nil {
+		return err
 	}
-
-	lakeStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO lakes (id, name, x, y) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare lake: %w", err)
+	if err := insertAll(ctx, tx, "road",
+		"INSERT INTO roads (id, from_x, from_y, to_x, to_y) VALUES (?, ?, ?, ?, ?)",
+		w.Roads, func(r Road) []any { return []any{r.ID, r.FromX, r.FromY, r.ToX, r.ToY} },
+	); err != nil {
+		return err
 	}
-	defer lakeStmt.Close()
-	for _, l := range w.Lakes {
-		if _, err := lakeStmt.ExecContext(ctx, l.ID, l.Name, l.X, l.Y); err != nil {
-			return fmt.Errorf("insert lake: %w", err)
-		}
+	if err := insertAll(ctx, tx, "road cell",
+		"INSERT INTO road_cells (road_id, x, y, ord) VALUES (?, ?, ?, ?)",
+		w.RoadCells, func(rc RoadCell) []any { return []any{rc.RoadID, rc.X, rc.Y, rc.Ord} },
+	); err != nil {
+		return err
 	}
-
-	passStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO passes (id, name, x, y) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare pass: %w", err)
+	if err := insertAll(ctx, tx, "den",
+		"INSERT INTO dens (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)",
+		w.Dens, func(d DenInfo) []any { return []any{d.ID, d.Name, d.X, d.Y, d.Elevation} },
+	); err != nil {
+		return err
 	}
-	defer passStmt.Close()
-	for _, p := range w.Passes {
-		if _, err := passStmt.ExecContext(ctx, p.ID, p.Name, p.X, p.Y); err != nil {
-			return fmt.Errorf("insert pass: %w", err)
-		}
+	if err := insertAll(ctx, tx, "nest",
+		"INSERT INTO drake_nests (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)",
+		w.Nests, func(n NestInfo) []any { return []any{n.ID, n.Name, n.X, n.Y, n.Elevation} },
+	); err != nil {
+		return err
 	}
-
-	roadStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO roads (id, from_x, from_y, to_x, to_y) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare road: %w", err)
-	}
-	defer roadStmt.Close()
-	for _, r := range w.Roads {
-		if _, err := roadStmt.ExecContext(ctx, r.ID, r.FromX, r.FromY, r.ToX, r.ToY); err != nil {
-			return fmt.Errorf("insert road: %w", err)
-		}
+	if err := insertAll(ctx, tx, "rookery",
+		"INSERT INTO wyvern_rookeries (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)",
+		w.Rookeries, func(r RookeryInfo) []any { return []any{r.ID, r.Name, r.X, r.Y, r.Elevation} },
+	); err != nil {
+		return err
 	}
 
-	rcStmt2, err := tx.PrepareContext(ctx,
-		"INSERT INTO road_cells (road_id, x, y, ord) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare road_cell: %w", err)
-	}
-	defer rcStmt2.Close()
-	for _, rc := range w.RoadCells {
-		if _, err := rcStmt2.ExecContext(ctx, rc.RoadID, rc.X, rc.Y, rc.Ord); err != nil {
-			return fmt.Errorf("insert road_cell: %w", err)
-		}
-	}
-
-	denStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO dens (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare den: %w", err)
-	}
-	defer denStmt.Close()
-	for _, d := range w.Dens {
-		if _, err := denStmt.ExecContext(ctx, d.ID, d.Name, d.X, d.Y, d.Elevation); err != nil {
-			return fmt.Errorf("insert den: %w", err)
-		}
-	}
-
-	nestStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO drake_nests (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare nest: %w", err)
-	}
-	defer nestStmt.Close()
-	for _, n := range w.Nests {
-		if _, err := nestStmt.ExecContext(ctx, n.ID, n.Name, n.X, n.Y, n.Elevation); err != nil {
-			return fmt.Errorf("insert nest: %w", err)
-		}
-	}
-
-	rookStmt, err := tx.PrepareContext(ctx,
-		"INSERT INTO wyvern_rookeries (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare rookery: %w", err)
-	}
-	defer rookStmt.Close()
-	for _, r := range w.Rookeries {
-		if _, err := rookStmt.ExecContext(ctx, r.ID, r.Name, r.X, r.Y, r.Elevation); err != nil {
-			return fmt.Errorf("insert rookery: %w", err)
-		}
-	}
-
-	metaStmt, err := tx.PrepareContext(ctx,
-		"INSERT OR REPLACE INTO world_meta (key, value) VALUES (?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare meta: %w", err)
-	}
-	defer metaStmt.Close()
 	era := string(w.Era)
 	if era == "" {
 		era = string(EraForKya(w.Kya))
 	}
-	pairs := []struct{ k, v string }{
+	meta := []struct{ k, v string }{
 		{"seed", fmt.Sprint(w.Seed)},
 		{"kya", fmt.Sprint(w.Kya)},
 		{"era", era},
@@ -209,11 +114,31 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 		{"global_mean_temp_delta", fmt.Sprintf("%g", w.Climate.GlobalMeanTempDelta)},
 		{"generated_at", time.Now().UTC().Format(time.RFC3339)},
 	}
-	for _, p := range pairs {
-		if _, err := metaStmt.ExecContext(ctx, p.k, p.v); err != nil {
-			return fmt.Errorf("set %s: %w", p.k, err)
-		}
+	if err := insertAll(ctx, tx, "meta",
+		"INSERT OR REPLACE INTO world_meta (key, value) VALUES (?, ?)",
+		meta, func(p struct{ k, v string }) []any { return []any{p.k, p.v} },
+	); err != nil {
+		return err
 	}
 
 	return tx.Commit()
+}
+
+// insertAll prepares query once and executes it for every row, mapping
+// each through args. label only feeds error messages.
+func insertAll[T any](ctx context.Context, tx *sql.Tx, label, query string, rows []T, args func(T) []any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("prepare %s: %w", label, err)
+	}
+	defer stmt.Close()
+	for _, r := range rows {
+		if _, err := stmt.ExecContext(ctx, args(r)...); err != nil {
+			return fmt.Errorf("insert %s: %w", label, err)
+		}
+	}
+	return nil
 }

@@ -33,35 +33,6 @@ func DirectionalGlyph(dx, dy int) rune {
 	}
 }
 
-var glyphForKind = map[string]rune{
-	"plateau":        '^',
-	"mountain":       'A',
-	"foothill":       'n',
-	"cliff":          '|',
-	"cradle":         '.',
-	"doab":           '#',
-	"sea_brine":      '%',
-	"sea_eastern":    '~',
-	"glacier":        '*',
-	"agraria":        ';',
-	"agraria_upland": '\'',
-	"lake":           'o',
-	"forest":         'T',
-	"tundra":         '`',
-	"marsh":          '=',
-	"seat":           'H',
-	"march":          'M',
-	"headwater":      'Y',
-	"outhold":        'x',
-	"reach":          'R',
-	"pass":           'V',
-	"den":            'D',
-	"nest":           'd',
-	"rookery":        'w',
-	"unknown":        '?',
-	"drowned":        '_',
-}
-
 // kindShading describes per-kind elevation-driven coloring. The
 // renderer picks a tier (0..4) based on (elev - base) / amp, mapped
 // from -1..1 to one of the 5 ANSI codes — lower elevations get
@@ -75,69 +46,123 @@ type kindShading struct {
 	bold      bool      // applied to all tiers
 }
 
-var shadingByKind = map[string]kindShading{
+func shade(base, amp float64, colors [5]string) kindShading {
+	return kindShading{base: base, amp: amp, colors: colors}
+}
+
+func boldShade(base, amp float64, colors [5]string) kindShading {
+	return kindShading{base: base, amp: amp, colors: colors, bold: true}
+}
+
+// kindSpec is everything the renderer knows about one region kind:
+// map glyph, elevation shading, and the display labels the info panel
+// uses. Adding a region kind means adding exactly one entry here (plus
+// the world-package RegionID mapping and the migration).
+type kindSpec struct {
+	glyph   rune
+	shading kindShading
+
+	// label is the plain-terrain name shown in the info panel.
+	label string
+
+	// tierLabel is set for seat-tier kinds (seat/march/headwater/
+	// outhold/reach) — the lore name of the seat tier.
+	tierLabel string
+
+	// featureLabel is set for named-feature kinds (den/nest/rookery/
+	// lake/pass) — the lead-in shown next to the feature's procgen name.
+	featureLabel string
+}
+
+var kinds = map[string]kindSpec{
 	// gray ramp — plateau: weathered stone → sun-bleached/snow-touched top
-	"plateau": {base: 1500, amp: 200, colors: [5]string{"248", "250", "253", "255", "231"}},
+	"plateau": {glyph: '^', label: "plateau",
+		shading: shade(1500, 200, [5]string{"248", "250", "253", "255", "231"})},
 	// stone gray ramp — mountains: dark base to light peaks
-	"mountain": {base: 3000, amp: 500, colors: [5]string{"238", "241", "244", "248", "252"}},
+	"mountain": {glyph: 'A', label: "mountain",
+		shading: shade(3000, 500, [5]string{"238", "241", "244", "248", "252"})},
 	// stone, narrower band — cliffs are tall but constrained
-	"cliff": {base: 2500, amp: 200, colors: [5]string{"240", "243", "246", "249", "252"}, bold: true},
+	"cliff": {glyph: '|', label: "cliff",
+		shading: boldShade(2500, 200, [5]string{"240", "243", "246", "249", "252"})},
 	// olive/khaki ramp — foothills: dark grass-soil → drier/lighter highs
-	"foothill": {base: 500, amp: 100, colors: [5]string{"100", "107", "143", "179", "186"}},
+	"foothill": {glyph: 'n', label: "foothill",
+		shading: shade(500, 100, [5]string{"100", "107", "143", "179", "186"})},
 	// brown ramp — doab: dark earth → weathered rock
-	"doab": {base: 2000, amp: 200, colors: [5]string{"94", "130", "137", "180", "187"}},
+	"doab": {glyph: '#', label: "doab",
+		shading: shade(2000, 200, [5]string{"94", "130", "137", "180", "187"})},
 	// green ramp — cradle: shadowed forest → bright meadow
-	"cradle": {base: 100, amp: 50, colors: [5]string{"22", "28", "34", "70", "107"}},
+	"cradle": {glyph: '.', label: "cradle",
+		shading: shade(100, 50, [5]string{"22", "28", "34", "70", "107"})},
 	// deep blue ramp — Brine: abyssal → shoaling
-	"sea_brine": {base: -800, amp: 100, colors: [5]string{"17", "18", "19", "20", "27"}},
+	"sea_brine": {glyph: '%', label: "Brine",
+		shading: shade(-800, 100, [5]string{"17", "18", "19", "20", "27"})},
 	// cyan ramp — Eastern Sea: deeper basin → shoals
-	"sea_eastern": {base: -150, amp: 50, colors: [5]string{"24", "31", "38", "45", "51"}},
+	"sea_eastern": {glyph: '~', label: "Eastern Sea",
+		shading: shade(-150, 50, [5]string{"24", "31", "38", "45", "51"})},
 	// icy ramp — glacier
-	"glacier": {base: 0, amp: 1500, colors: [5]string{"152", "153", "159", "195", "231"}, bold: true},
+	"glacier": {glyph: '*', label: "glacier",
+		shading: boldShade(0, 1500, [5]string{"152", "153", "159", "195", "231"})},
 	// muted yellow-tan — Agraria coast (lower)
-	"agraria": {base: -80, amp: 15, colors: [5]string{"137", "143", "144", "179", "180"}},
+	"agraria": {glyph: ';', label: "Agraria coast",
+		shading: shade(-80, 15, [5]string{"137", "143", "144", "179", "180"})},
 	// brighter tan — Agraria upland (higher)
-	"agraria_upland": {base: -40, amp: 15, colors: [5]string{"143", "179", "180", "215", "222"}},
+	"agraria_upland": {glyph: '\'', label: "Agraria upland",
+		shading: shade(-40, 15, [5]string{"143", "179", "180", "215", "222"})},
 	// lake — pale blue, distinct from rivers (bright bold cyan) so
 	// you can see lakes adjacent to rivers
-	"lake": {base: 100, amp: 50, colors: [5]string{"31", "38", "45", "81", "117"}, bold: true},
+	"lake": {glyph: 'o', label: "lake", featureLabel: "lake",
+		shading: boldShade(100, 50, [5]string{"31", "38", "45", "81", "117"})},
 	// forest — darker green than cradle's grassland-y default; bumpy
 	// canopy reads against `T` glyph
-	"forest": {base: 100, amp: 50, colors: [5]string{"22", "28", "29", "65", "71"}},
+	"forest": {glyph: 'T', label: "forest",
+		shading: shade(100, 50, [5]string{"22", "28", "29", "65", "71"})},
 	// tundra — pale gray-green; cold and sparse
-	"tundra": {base: 100, amp: 50, colors: [5]string{"101", "108", "144", "145", "151"}},
+	"tundra": {glyph: '`', label: "tundra",
+		shading: shade(100, 50, [5]string{"101", "108", "144", "145", "151"})},
 	// marsh — muddy yellow-green, water-reflecting; sits between
 	// forest and the water it borders
-	"marsh": {base: 100, amp: 50, colors: [5]string{"58", "100", "107", "143", "108"}},
+	"marsh": {glyph: '=', label: "marsh",
+		shading: shade(100, 50, [5]string{"58", "100", "107", "143", "108"})},
 	// seat — bold gold, civilization marker on a river chain
-	"seat": {base: 100, amp: 50, colors: [5]string{"178", "214", "220", "226", "227"}, bold: true},
+	"seat": {glyph: 'H', label: "seat", tierLabel: "Tributary",
+		shading: boldShade(100, 50, [5]string{"178", "214", "220", "226", "227"})},
 	// march — slate steel, the wall against the mountain wilds; cooler
 	// and more austere than the gold of a salmon-lord's hall
-	"march": {base: 500, amp: 200, colors: [5]string{"60", "67", "74", "110", "117"}, bold: true},
+	"march": {glyph: 'M', label: "march", tierLabel: "March",
+		shading: boldShade(500, 200, [5]string{"60", "67", "74", "110", "117"})},
 	// headwater — pale silver-cyan, sacred ice-melt source; brighter
 	// at high elevation since the headwaters of major rivers sit high
-	"headwater": {base: 800, amp: 300, colors: [5]string{"81", "117", "153", "159", "195"}, bold: true},
+	"headwater": {glyph: 'Y', label: "headwater", tierLabel: "Headwater Hold",
+		shading: boldShade(800, 300, [5]string{"81", "117", "153", "159", "195"})},
 	// outhold — muted ochre, the off-grid catch-all; less imposing than
 	// the other seat tiers, suited to ranchers/prospectors/fugitives
-	"outhold": {base: 200, amp: 200, colors: [5]string{"94", "130", "137", "172", "179"}},
+	"outhold": {glyph: 'x', label: "outhold", tierLabel: "Outhold",
+		shading: shade(200, 200, [5]string{"94", "130", "137", "172", "179"})},
 	// reach — bold magenta-violet, the frontier-explorer hold; visually
 	// distinct from earthier tiers since Reaches are exceptional & rare
-	"reach": {base: 200, amp: 200, colors: [5]string{"54", "91", "127", "163", "207"}, bold: true},
+	"reach": {glyph: 'R', label: "reach", tierLabel: "Reach",
+		shading: boldShade(200, 200, [5]string{"54", "91", "127", "163", "207"})},
 	// pass — yellow-stone, a saddle through the mountain ridge; bright
 	// against the surrounding gray mountains so passes stand out
-	"pass": {base: 2500, amp: 300, colors: [5]string{"178", "214", "220", "229", "230"}, bold: true},
+	"pass": {glyph: 'V', label: "mountain pass", featureLabel: "mountain pass",
+		shading: boldShade(2500, 300, [5]string{"178", "214", "220", "229", "230"})},
 	// den — blood-crimson, the dragon's lair; deeper red at higher
 	// elevation since the great dens sit at the loftiest peaks
-	"den": {base: 3000, amp: 500, colors: [5]string{"88", "124", "160", "196", "9"}, bold: true},
+	"den": {glyph: 'D', label: "dragon den", featureLabel: "dragon den",
+		shading: boldShade(3000, 500, [5]string{"88", "124", "160", "196", "9"})},
 	// nest — orange-rust, drake's lair; less imposing than the
 	// dragon's blood-red but in the same warning-color family
-	"nest": {base: 500, amp: 200, colors: [5]string{"94", "130", "166", "172", "208"}},
+	"nest": {glyph: 'd', label: "drake nest", featureLabel: "drake nest",
+		shading: shade(500, 200, [5]string{"94", "130", "166", "172", "208"})},
 	// rookery — sandy/dun, wyvern colonies on cliffs; muted earth
 	// tones since wyverns are "the lesser raider" — common, less
 	// fearsome than drakes or dragons
-	"rookery": {base: 2500, amp: 200, colors: [5]string{"94", "137", "143", "180", "187"}},
-	"unknown": {base: 0, amp: 1, colors: [5]string{"99", "99", "99", "99", "99"}},
-	"drowned": {base: -800, amp: 100, colors: [5]string{"60", "60", "60", "60", "60"}},
+	"rookery": {glyph: 'w', label: "wyvern rookery", featureLabel: "wyvern rookery",
+		shading: shade(2500, 200, [5]string{"94", "137", "143", "180", "187"})},
+	"unknown": {glyph: '?', label: "unknown",
+		shading: shade(0, 1, [5]string{"99", "99", "99", "99", "99"})},
+	"drowned": {glyph: '_', label: "drowned",
+		shading: shade(-800, 100, [5]string{"60", "60", "60", "60", "60"})},
 }
 
 // styleFor returns a lipgloss Style for InfoPanel rendering.
@@ -210,10 +235,11 @@ type bufCell struct {
 // colorFor returns the ANSI-256 color code and bold flag for a grid cell.
 // Used in the hot render path; allocates nothing.
 func colorFor(kind string, elev float64) (color string, bold bool) {
-	s, ok := shadingByKind[kind]
+	spec, ok := kinds[kind]
 	if !ok {
 		return "", false
 	}
+	s := spec.shading
 	return s.colors[elevTier(elev, s.base, s.amp)], s.bold
 }
 
@@ -292,9 +318,9 @@ func BuildGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBou
 		if gy < 0 || gy >= height || gx < 0 || gx >= width {
 			continue
 		}
-		g, ok := glyphForKind[c.Kind]
-		if !ok {
-			g = '?'
+		g := '?'
+		if spec, ok := kinds[c.Kind]; ok {
+			g = spec.glyph
 		}
 		col, bd := colorFor(c.Kind, c.Elevation)
 		buf[gy][gx] = bufCell{g, col, bd}
@@ -374,7 +400,10 @@ func (gb *GridBuf) Render(curX, curY int64, path []PathCell) string {
 	}
 
 	// Index path cells by row → map[col]glyph for O(1) lookup.
-	type entry struct{ col int; g rune }
+	type entry struct {
+		col int
+		g   rune
+	}
 	pathOverlay := make(map[int][]entry, len(path))
 	for _, p := range path {
 		row := int(p.Y - gb.minY)
@@ -427,9 +456,9 @@ func Grid(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, 
 // the info panel. Only the fields that have data are populated — callers
 // check SeatName/RiverName/FeatureName for non-empty to know what's there.
 type CellInfo struct {
-	Kind  string
-	Elev  float64
-	X, Y  int64
+	Kind string
+	Elev float64
+	X, Y int64
 
 	// Populated when the cell is a seat tier (seat/march/headwater/outhold/reach).
 	SeatName     string
@@ -442,44 +471,13 @@ type CellInfo struct {
 	FeatureName string
 }
 
-var tierLabel = map[string]string{
-	"seat":      "Tributary",
-	"march":     "March",
-	"headwater": "Headwater Hold",
-	"outhold":   "Outhold",
-	"reach":     "Reach",
-}
-
-var featureLabel = map[string]string{
-	"den":     "dragon den",
-	"nest":    "drake nest",
-	"rookery": "wyvern rookery",
-	"lake":    "lake",
-	"pass":    "mountain pass",
-}
-
-var kindLabel = map[string]string{
-	"plateau":        "plateau",
-	"mountain":       "mountain",
-	"foothill":       "foothill",
-	"cliff":          "cliff",
-	"cradle":         "cradle",
-	"doab":           "doab",
-	"sea_brine":      "Brine",
-	"sea_eastern":    "Eastern Sea",
-	"glacier":        "glacier",
-	"agraria":        "Agraria coast",
-	"agraria_upland": "Agraria upland",
-	"lake":           "lake",
-	"forest":         "forest",
-	"tundra":         "tundra",
-	"marsh":          "marsh",
-	"den":            "dragon den",
-	"nest":           "drake nest",
-	"rookery":        "wyvern rookery",
-	"pass":           "mountain pass",
-	"drowned":        "drowned",
-	"unknown":        "unknown",
+// labelOr returns label unless it's empty, in which case the raw kind
+// string is the best display we have.
+func labelOr(label, kind string) string {
+	if label == "" {
+		return kind
+	}
+	return label
 }
 
 func sep() string { return sepStyle.Render("   ·   ") }
@@ -490,18 +488,15 @@ func InfoPanel(info CellInfo) string {
 		return dimStyle.Render(fmt.Sprintf("(%d, %d)", info.X, info.Y))
 	}
 
+	spec := kinds[info.Kind]
 	var parts []string
 
 	switch {
 	case info.SeatName != "":
 		// Named seat — lead with the hall name and tier.
-		tier := tierLabel[info.Kind]
-		if tier == "" {
-			tier = info.Kind
-		}
 		seatSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, seatSt.Render(info.SeatName))
-		parts = append(parts, seatSt.Render(tier))
+		parts = append(parts, seatSt.Render(labelOr(spec.tierLabel, info.Kind)))
 		if info.SeatPressure > 0 {
 			parts = append(parts, dimStyle.Render(fmt.Sprintf("dragon pressure %.0f", info.SeatPressure)))
 		}
@@ -511,33 +506,21 @@ func InfoPanel(info CellInfo) string {
 
 	case info.FeatureName != "":
 		// Named feature — lead with the procgen name and kind label.
-		feat := featureLabel[info.Kind]
-		if feat == "" {
-			feat = info.Kind
-		}
 		featSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, featSt.Render(info.FeatureName))
-		parts = append(parts, featSt.Render(feat))
+		parts = append(parts, featSt.Render(labelOr(spec.featureLabel, info.Kind)))
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 
 	case info.RiverName != "":
 		// River cell — show river name then underlying terrain.
 		parts = append(parts, riverStyle.Render("river "+info.RiverName))
-		terrain := kindLabel[info.Kind]
-		if terrain == "" {
-			terrain = info.Kind
-		}
-		parts = append(parts, dimStyle.Render(terrain))
+		parts = append(parts, dimStyle.Render(labelOr(spec.label, info.Kind)))
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 
 	default:
 		// Plain terrain.
-		label := kindLabel[info.Kind]
-		if label == "" {
-			label = info.Kind
-		}
 		terrSt := styleFor(info.Kind, info.Elev)
-		parts = append(parts, terrSt.Render(label))
+		parts = append(parts, terrSt.Render(labelOr(spec.label, info.Kind)))
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 	}
 
@@ -550,13 +533,13 @@ func Title(s string) string {
 
 func Legend() string {
 	item := func(kind string, label string) string {
-		g := glyphForKind[kind]
-		s := shadingByKind[kind]
+		spec := kinds[kind]
+		s := spec.shading
 		st := lipgloss.NewStyle().Foreground(lipgloss.Color(s.colors[2]))
 		if s.bold {
 			st = st.Bold(true)
 		}
-		return st.Render(string(g)) + dimStyle.Render(" "+label)
+		return st.Render(string(spec.glyph)) + dimStyle.Render(" "+label)
 	}
 	row1 := strings.Join([]string{
 		item("plateau", "plateau"),

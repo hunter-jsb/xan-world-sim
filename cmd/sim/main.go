@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/heap"
 	"context"
 	"database/sql"
 	"flag"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/hunterjsb/xan-world-sim/internal/db"
 	"github.com/hunterjsb/xan-world-sim/internal/migrations"
+	"github.com/hunterjsb/xan-world-sim/internal/pqueue"
 	"github.com/hunterjsb/xan-world-sim/internal/render"
 	"github.com/hunterjsb/xan-world-sim/internal/world"
 )
@@ -53,11 +53,7 @@ type model struct {
 
 	// Raw world data — updated on each regen, used for instant
 	// cursor re-renders without re-querying the DB.
-	cells    []db.GetCellsInBoundsRow
-	rivers   []db.GetRiverCellsInBoundsRow
-	roads    []db.GetRoadCellsInBoundsRow
-	seats    []db.GetSeatsInBoundsRow
-	features []db.GetNamedFeaturesInBoundsRow
+	data worldData
 
 	// Lookup maps built from raw data for O(1) cursor inspection.
 	cellAt    map[[2]int64]db.GetCellsInBoundsRow
@@ -68,10 +64,10 @@ type model struct {
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
-	seed   int64
-	kya    int
-	era    world.Era
-	status string
+	seed    int64
+	kya     int
+	era     world.Era
+	status  string
 
 	// Cursor position on the map.
 	curX, curY int64
@@ -86,19 +82,56 @@ type model struct {
 	minX, minY, maxX, maxY int64
 }
 
-// regenMsg carries the raw query results from a regen Cmd. Rendering
-// is deferred to the Update handler so cursor movements can re-render
-// from stored data without re-querying the DB.
-type regenMsg struct {
+// worldData bundles the viewport query results the TUI renders from.
+type worldData struct {
 	cells    []db.GetCellsInBoundsRow
 	rivers   []db.GetRiverCellsInBoundsRow
 	roads    []db.GetRoadCellsInBoundsRow
 	seats    []db.GetSeatsInBoundsRow
 	features []db.GetNamedFeaturesInBoundsRow
-	seed     int64
-	kya      int
-	era      world.Era
-	err      error
+}
+
+// fetchWorldData loads everything in the viewport in one place — used
+// both at startup and after each regen.
+func fetchWorldData(ctx context.Context, q *db.Queries, minX, minY, maxX, maxY int64) (worldData, error) {
+	var d worldData
+	var err error
+	d.cells, err = q.GetCellsInBounds(ctx, db.GetCellsInBoundsParams{
+		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
+	})
+	if err != nil {
+		return d, fmt.Errorf("cells: %w", err)
+	}
+	d.rivers, err = q.GetRiverCellsInBounds(ctx, db.GetRiverCellsInBoundsParams{
+		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
+	})
+	if err != nil {
+		return d, fmt.Errorf("rivers: %w", err)
+	}
+	d.roads, err = q.GetRoadCellsInBounds(ctx, minX, maxX, minY, maxY)
+	if err != nil {
+		return d, fmt.Errorf("roads: %w", err)
+	}
+	d.seats, err = q.GetSeatsInBounds(ctx, minX, maxX, minY, maxY)
+	if err != nil {
+		return d, fmt.Errorf("seats: %w", err)
+	}
+	d.features, err = q.GetNamedFeaturesInBounds(ctx, minX, maxX, minY, maxY)
+	if err != nil {
+		return d, fmt.Errorf("features: %w", err)
+	}
+	return d, nil
+}
+
+// regenMsg carries the raw query results from a regen Cmd. Rendering
+// is deferred to the Update handler so cursor movements can re-render
+// from stored data without re-querying the DB.
+type regenMsg struct {
+	data worldData
+	seed int64
+	kya  int
+	era  world.Era
+	err  error
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -215,13 +248,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.kya != m.kya || msg.seed != m.seed {
 			return m, nil
 		}
-		m.cells = msg.cells
-		m.rivers = msg.rivers
-		m.roads = msg.roads
-		m.seats = msg.seats
-		m.features = msg.features
+		m.data = msg.data
 		m.buildLookups()
-		m.gridBuf = render.BuildGridBuf(m.cells, m.rivers, m.roads, m.minX, m.minY, m.maxX, m.maxY)
+		m.gridBuf = render.BuildGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.minX, m.minY, m.maxX, m.maxY)
 		// World changed — terrain costs shift, so stale paths are misleading.
 		m.expStart = nil
 		m.expPath = nil
@@ -235,23 +264,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // buildLookups rebuilds the O(1) coord→data maps from the stored slices.
 func (m *model) buildLookups() {
-	m.cellAt = make(map[[2]int64]db.GetCellsInBoundsRow, len(m.cells))
-	for _, c := range m.cells {
+	m.cellAt = make(map[[2]int64]db.GetCellsInBoundsRow, len(m.data.cells))
+	for _, c := range m.data.cells {
 		m.cellAt[[2]int64{c.X, c.Y}] = c
 	}
-	m.riverAt = make(map[[2]int64]string, len(m.rivers))
-	for _, r := range m.rivers {
+	m.riverAt = make(map[[2]int64]string, len(m.data.rivers))
+	for _, r := range m.data.rivers {
 		m.riverAt[[2]int64{r.X, r.Y}] = r.RiverName
 	}
-	m.seatAt = make(map[[2]int64]db.GetSeatsInBoundsRow, len(m.seats))
-	for _, s := range m.seats {
+	m.seatAt = make(map[[2]int64]db.GetSeatsInBoundsRow, len(m.data.seats))
+	for _, s := range m.data.seats {
 		m.seatAt[[2]int64{s.X, s.Y}] = s
 	}
-	m.featureAt = make(map[[2]int64]string, len(m.features))
-	for _, f := range m.features {
+	m.featureAt = make(map[[2]int64]string, len(m.data.features))
+	for _, f := range m.data.features {
 		m.featureAt[[2]int64{f.X, f.Y}] = f.Name
 	}
-	m.dangerMap = buildDangerMap(m.features)
+	m.dangerMap = buildDangerMap(m.data.features)
 }
 
 // buildMap renders the grid using the cached GridBuf — only the cursor
@@ -299,48 +328,24 @@ func (m model) regen(seed int64, kya int) tea.Cmd {
 			simLog("persist failed seed=%d kya=%d: %v", seed, kya, err)
 			return regenMsg{err: fmt.Errorf("persist: %w", err)}
 		}
-		cells, err := m.q.GetCellsInBounds(m.ctx, db.GetCellsInBoundsParams{
-			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
-		})
+		data, err := fetchWorldData(m.ctx, m.q, m.minX, m.minY, m.maxX, m.maxY)
 		if err != nil {
-			return regenMsg{err: fmt.Errorf("cells: %w", err)}
-		}
-		rivers, err := m.q.GetRiverCellsInBounds(m.ctx, db.GetRiverCellsInBoundsParams{
-			X: m.minX, X_2: m.maxX, Y: m.minY, Y_2: m.maxY,
-		})
-		if err != nil {
-			return regenMsg{err: fmt.Errorf("rivers: %w", err)}
-		}
-		roads, err := m.q.GetRoadCellsInBounds(m.ctx, m.minX, m.maxX, m.minY, m.maxY)
-		if err != nil {
-			return regenMsg{err: fmt.Errorf("roads: %w", err)}
-		}
-		seats, err := m.q.GetSeatsInBounds(m.ctx, m.minX, m.maxX, m.minY, m.maxY)
-		if err != nil {
-			return regenMsg{err: fmt.Errorf("seats: %w", err)}
-		}
-		features, err := m.q.GetNamedFeaturesInBounds(m.ctx, m.minX, m.maxX, m.minY, m.maxY)
-		if err != nil {
-			return regenMsg{err: fmt.Errorf("features: %w", err)}
+			return regenMsg{err: err}
 		}
 		simLog("ok seed=%d kya=%d cells=%d rivers=%d roads=%d seats=%d features=%d",
-			seed, kya, len(cells), len(rivers), len(roads), len(seats), len(features))
-		return regenMsg{
-			cells: cells, rivers: rivers, roads: roads,
-			seats: seats, features: features,
-			seed: seed, kya: kya, era: w.Era,
-		}
+			seed, kya, len(data.cells), len(data.rivers), len(data.roads), len(data.seats), len(data.features))
+		return regenMsg{data: data, seed: seed, kya: kya, era: w.Era}
 	}
 }
 
 // simLog appends a timestamped line to /tmp/xan-sim.log.
-func simLog(format string, args ...interface{}) {
+func simLog(format string, args ...any) {
 	f, err := os.OpenFile("/tmp/xan-sim.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s "+format+"\n", append([]interface{}{time.Now().Format("15:04:05.000")}, args...)...)
+	fmt.Fprintf(f, "%s "+format+"\n", append([]any{time.Now().Format("15:04:05.000")}, args...)...)
 }
 
 var (
@@ -373,7 +378,7 @@ func (m model) View() string {
 	if m.expStart != nil {
 		expHint = fmt.Sprintf("s clear expedition (%d steps)", max(0, len(m.expPath)-1))
 	}
-	b.WriteString(dimStyle.Render("hjkl cursor   "+expHint+"   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
+	b.WriteString(dimStyle.Render("hjkl cursor   " + expHint + "   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
@@ -420,29 +425,9 @@ func main() {
 		log.Fatalf("bootstrap world: %v", err)
 	}
 
-	cells, err := q.GetCellsInBounds(ctx, db.GetCellsInBoundsParams{
-		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
-	})
+	data, err := fetchWorldData(ctx, q, minX, minY, maxX, maxY)
 	if err != nil {
-		log.Fatalf("get cells: %v", err)
-	}
-	rivers, err := q.GetRiverCellsInBounds(ctx, db.GetRiverCellsInBoundsParams{
-		X: minX, X_2: maxX, Y: minY, Y_2: maxY,
-	})
-	if err != nil {
-		log.Fatalf("get river cells: %v", err)
-	}
-	roads, err := q.GetRoadCellsInBounds(ctx, minX, maxX, minY, maxY)
-	if err != nil {
-		log.Fatalf("get road cells: %v", err)
-	}
-	seats, err := q.GetSeatsInBounds(ctx, minX, maxX, minY, maxY)
-	if err != nil {
-		log.Fatalf("get seats: %v", err)
-	}
-	features, err := q.GetNamedFeaturesInBounds(ctx, minX, maxX, minY, maxY)
-	if err != nil {
-		log.Fatalf("get features: %v", err)
+		log.Fatalf("fetch world: %v", err)
 	}
 
 	era := world.EraForKya(kya)
@@ -450,7 +435,7 @@ func main() {
 	if *printOnce {
 		fmt.Println(render.Title("xan-world-sim — the cradle"))
 		fmt.Println()
-		fmt.Println(render.Grid(cells, rivers, roads, minX, minY, maxX, maxY, -1, -1))
+		fmt.Println(render.Grid(data.cells, data.rivers, data.roads, minX, minY, maxX, maxY, -1, -1))
 		fmt.Println()
 		fmt.Println(render.Legend())
 		fmt.Printf("\nt: %dkya (%s)   glacial: %.2f   seed: %d\n",
@@ -464,25 +449,21 @@ func main() {
 
 	m := model{
 		ctx: ctx, conn: conn, q: q,
-		regenMu:  &sync.Mutex{},
-		cells:    cells,
-		rivers:   rivers,
-		roads:    roads,
-		seats:    seats,
-		features: features,
-		legend:   render.Legend(),
-		seed:     seed,
-		kya:      kya,
-		era:      era,
-		curX:     initCurX,
-		curY:     initCurY,
-		minX:     minX,
-		minY:     minY,
-		maxX:     maxX,
-		maxY:     maxY,
+		regenMu: &sync.Mutex{},
+		data:    data,
+		legend:  render.Legend(),
+		seed:    seed,
+		kya:     kya,
+		era:     era,
+		curX:    initCurX,
+		curY:    initCurY,
+		minX:    minX,
+		minY:    minY,
+		maxX:    maxX,
+		maxY:    maxY,
 	}
 	m.buildLookups()
-	m.gridBuf = render.BuildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY)
+	m.gridBuf = render.BuildGridBuf(data.cells, data.rivers, data.roads, minX, minY, maxX, maxY)
 	m.mapStr = m.buildMap()
 
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
@@ -494,19 +475,6 @@ func main() {
 type expHeapItem struct {
 	x, y int64
 	cost int
-}
-type expHeap []expHeapItem
-
-func (h expHeap) Len() int            { return len(h) }
-func (h expHeap) Less(i, j int) bool  { return h[i].cost < h[j].cost }
-func (h expHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *expHeap) Push(x interface{}) { *h = append(*h, x.(expHeapItem)) }
-func (h *expHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[:n-1]
-	return x
 }
 
 // recomputeExpPath re-runs Dijkstra from expStart to the current cursor.
@@ -606,13 +574,13 @@ func (m *model) computePath(sx, sy, ex, ey int64) []render.PathCell {
 	prev := make(map[coord]coord, 512)
 	dist[start] = 0
 
-	h := &expHeap{{sx, sy, 0}}
-	heap.Init(h)
+	h := pqueue.New(func(a, b expHeapItem) bool { return a.cost < b.cost })
+	h.Push(expHeapItem{sx, sy, 0})
 
 	dirs := [8][2]int64{{-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}}
 
 	for h.Len() > 0 {
-		cur := heap.Pop(h).(expHeapItem)
+		cur := h.Pop()
 		cc := coord{cur.x, cur.y}
 		if cc == end {
 			break
@@ -634,7 +602,7 @@ func (m *model) computePath(sx, sy, ex, ey int64) []render.PathCell {
 			if d, seen := dist[nc]; !seen || newDist < d {
 				dist[nc] = newDist
 				prev[nc] = cc
-				heap.Push(h, expHeapItem{nx, ny, newDist})
+				h.Push(expHeapItem{nx, ny, newDist})
 			}
 		}
 	}

@@ -32,14 +32,14 @@ const (
 // at that resolution); other sizes scale linearly. Widening the map
 // just bumps the constants in world.go and everything below follows.
 //
-//   [0, brineEndX)              : Brine deep — always-submerged west
-//   brineEndX                   : Agraria coast (deeper shelf)
-//   brineEndX + 1               : Agraria upland
-//   brineEndX + 2               : Agraria upland tapered
-//   [landStartX, mountainEndX)  : Mountain row land (plateau / mountain
-//                                 / foothill / cradle / doab)
-//   [mountainEndX, eastSeaStart): Cradle extending east
-//   [eastSeaStart, Width)       : Eastern Sea
+//	[0, brineEndX)              : Brine deep — always-submerged west
+//	brineEndX                   : Agraria coast (deeper shelf)
+//	brineEndX + 1               : Agraria upland
+//	brineEndX + 2               : Agraria upland tapered
+//	[landStartX, mountainEndX)  : Mountain row land (plateau / mountain
+//	                              / foothill / cradle / doab)
+//	[mountainEndX, eastSeaStart): Cradle extending east
+//	[eastSeaStart, Width)       : Eastern Sea
 const (
 	// brineEndX = first land-strip column (right after the 4-col
 	// brine band of the reference 80-wide layout). Scales as Width/20.
@@ -241,10 +241,10 @@ func diffuseHillslope(elev [][]float64, zones [][]BedrockZone) {
 // trunk valleys carved by high-drainage flows, stable mountain peaks
 // at drainage divides, smooth hillslope gradients in between.
 const (
-	erosionSteps = 15    // iterations to quasi-steady-state
-	erosionK     = 2e-3  // stream-power erodibility; larger = faster valley carving
-	erosionM     = 0.5   // drainage-area exponent (standard SPM value)
-	diffusionD   = 0.02  // hillslope diffusivity; smooths inter-cell noise
+	erosionSteps = 15   // iterations to quasi-steady-state
+	erosionK     = 2e-3 // stream-power erodibility; larger = faster valley carving
+	erosionM     = 0.5  // drainage-area exponent (standard SPM value)
+	diffusionD   = 0.02 // hillslope diffusivity; smooths inter-cell noise
 )
 
 func generateBedrock(rng *rand.Rand) [][]BedrockCell {
@@ -432,3 +432,60 @@ func baseFoothillThickness(x int) int {
 	return b
 }
 
+// ----- bedrock-procgen helpers (used by generateBedrock) -----
+
+func genMountainRow(rng *rand.Rand) []int {
+	out := make([]int, Width)
+	jitter := 0
+	for x := Width - 1; x >= 0; x-- {
+		base := baseMountainRow(x)
+		if base < 0 {
+			out[x] = -1
+			continue
+		}
+		jitter += rng.Intn(3) - 1
+		jitter = clamp(jitter, -2, 2)
+		mr := base + jitter
+		mr = clamp(mr, 1, Height-3)
+		out[x] = mr
+	}
+	return out
+}
+
+func genFoothillThickness(rng *rand.Rand) []int {
+	out := make([]int, Width)
+	for x := 0; x < Width; x++ {
+		base := baseFoothillThickness(x)
+		if base == 0 {
+			out[x] = 0
+			continue
+		}
+		ft := base + rng.Intn(3) - 1
+		out[x] = clamp(ft, 0, 5)
+	}
+	return out
+}
+
+func genCoastX(rng *rand.Rand) []int {
+	out := make([]int, Height)
+	jitter := 0
+	for y := 0; y < Height; y++ {
+		jitter += rng.Intn(3) - 1
+		jitter = clamp(jitter, -2, 2)
+		// Bounds (-3/+5 around center) are absolute cell counts, not
+		// proportional to Width — the per-row jitter only swings ±2,
+		// so a small fixed window is enough for any map size.
+		out[y] = clamp(coastCenterX+jitter, coastCenterX-3, coastCenterX+5)
+	}
+	return out
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}

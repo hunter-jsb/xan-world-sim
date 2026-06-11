@@ -103,4 +103,3 @@ func TestElevationField_CliffsPreserved(t *testing.T) {
 		}
 	}
 }
-

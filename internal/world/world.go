@@ -8,32 +8,32 @@ const (
 	Height = 50
 
 	// Region IDs match the ones inserted by the migrations.
-	RegionPlateau    int64 = 1
-	RegionMountain   int64 = 2
-	RegionCradle     int64 = 3
-	RegionBrine      int64 = 4
-	RegionEastSea    int64 = 5
-	RegionUnknown    int64 = 6
-	RegionDrowned    int64 = 7
-	RegionDoab       int64 = 8
-	RegionCliff      int64 = 9
-	RegionFoothill   int64 = 10
-	RegionGlacier        int64 = 11
-	RegionAgraria        int64 = 12
-	RegionAgrariaUpland  int64 = 13
-	RegionLake           int64 = 14
-	RegionForest         int64 = 15
-	RegionTundra         int64 = 16
-	RegionMarsh          int64 = 17
-	RegionSeat           int64 = 18
-	RegionMarch          int64 = 19
-	RegionHeadwater      int64 = 20
-	RegionOuthold        int64 = 21
-	RegionReach          int64 = 22
-	RegionPass           int64 = 23
-	RegionDragonDen      int64 = 24
-	RegionDrakeNest      int64 = 25
-	RegionWyvernRookery  int64 = 26
+	RegionPlateau       int64 = 1
+	RegionMountain      int64 = 2
+	RegionCradle        int64 = 3
+	RegionBrine         int64 = 4
+	RegionEastSea       int64 = 5
+	RegionUnknown       int64 = 6
+	RegionDrowned       int64 = 7
+	RegionDoab          int64 = 8
+	RegionCliff         int64 = 9
+	RegionFoothill      int64 = 10
+	RegionGlacier       int64 = 11
+	RegionAgraria       int64 = 12
+	RegionAgrariaUpland int64 = 13
+	RegionLake          int64 = 14
+	RegionForest        int64 = 15
+	RegionTundra        int64 = 16
+	RegionMarsh         int64 = 17
+	RegionSeat          int64 = 18
+	RegionMarch         int64 = 19
+	RegionHeadwater     int64 = 20
+	RegionOuthold       int64 = 21
+	RegionReach         int64 = 22
+	RegionPass          int64 = 23
+	RegionDragonDen     int64 = 24
+	RegionDrakeNest     int64 = 25
+	RegionWyvernRookery int64 = 26
 )
 
 type RegionCell struct {
@@ -122,9 +122,9 @@ type RookeryInfo struct {
 // inter-Tributary spine implicitly (the lore: "the river physically
 // connects them"); roads are the overland complement.
 type Road struct {
-	ID                 int64
-	FromX, FromY       int64
-	ToX, ToY           int64
+	ID           int64
+	FromX, FromY int64
+	ToX, ToY     int64
 }
 
 // RoadCell is one cell along a Road. Ord increases from the source
@@ -152,15 +152,15 @@ type World struct {
 	Orbital OrbitalParams
 	Climate ClimateState
 
-	Regions    []RegionCell
-	RiverInfo  []River     // (id, name) — populated alongside Rivers
-	Rivers     []RiverCell // (river_id, x, y, ord)
-	Seats      []NamedSeat // settlements (Tributary, March, Headwater, Reach, Outhold)
-	Lakes      []LakeInfo  // named lake clusters (one per connected component)
-	Passes     []PassInfo  // mountain passes through the ridge
-	Roads      []Road      // trade routes from each non-Tributary seat
-	RoadCells  []RoadCell  // cells along each road
-	Dens       []DenInfo   // dragon dens at mountain peaks
-	Nests      []NestInfo  // drake nests at foothill peaks
-	Rookeries  []RookeryInfo // wyvern rookeries on cliffs
+	Regions   []RegionCell
+	RiverInfo []River       // (id, name) — populated alongside Rivers
+	Rivers    []RiverCell   // (river_id, x, y, ord)
+	Seats     []NamedSeat   // settlements (Tributary, March, Headwater, Reach, Outhold)
+	Lakes     []LakeInfo    // named lake clusters (one per connected component)
+	Passes    []PassInfo    // mountain passes through the ridge
+	Roads     []Road        // trade routes from each non-Tributary seat
+	RoadCells []RoadCell    // cells along each road
+	Dens      []DenInfo     // dragon dens at mountain peaks
+	Nests     []NestInfo    // drake nests at foothill peaks
+	Rookeries []RookeryInfo // wyvern rookeries on cliffs
 }

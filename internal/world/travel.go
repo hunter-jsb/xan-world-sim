@@ -1,30 +1,48 @@
 package world
 
-// TravelCost returns the base movement cost to enter a cell of the
-// given region kind (the string stored in the DB). Returns -1 if the
-// terrain is impassable. River presence is handled by the caller.
-//
-// This is the canonical cost table for overland foot travel. Road
-// construction uses a subset of these values (plateau and dragon lairs
-// become impassable for road-building purposes).
-func TravelCost(kind string) int {
-	switch kind {
-	case "seat", "march", "headwater", "outhold", "reach":
+// travelCostFor is the canonical terrain cost table for overland foot
+// travel, keyed by region ID. Returns -1 if the terrain is impassable
+// (mountain, cliff, sea, glacier, lake, drowned, unknown). River
+// presence is handled by the caller (rivers cost 1).
+func travelCostFor(id int64) int {
+	switch id {
+	case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach:
 		return 2
-	case "pass":
+	case RegionPass:
 		return 3
-	case "cradle", "forest", "tundra", "agraria", "agraria_upland":
+	case RegionCradle, RegionForest, RegionTundra, RegionAgraria, RegionAgrariaUpland:
 		return 4
-	case "foothill":
+	case RegionFoothill:
 		return 5
-	case "doab":
+	case RegionDoab:
 		return 6
-	case "marsh":
+	case RegionMarsh:
 		return 8
-	case "plateau":
+	case RegionPlateau:
 		return 15
-	case "den", "nest", "rookery":
+	case RegionDragonDen, RegionDrakeNest, RegionWyvernRookery:
 		return 25
 	}
-	return -1 // mountain, cliff, sea, glacier, lake, drowned, unknown
+	return -1
+}
+
+// TravelCost is the kind-string façade over travelCostFor for callers
+// that hold DB rows (the regions table stores kinds, not our IDs).
+func TravelCost(kind string) int {
+	id, ok := regionIDByKind[kind]
+	if !ok {
+		return -1
+	}
+	return travelCostFor(id)
+}
+
+// roadBuildCost is the road-construction variant of the travel table:
+// an expedition can slog across the plateau or sneak past a lair, but
+// nobody builds a trade road there.
+func roadBuildCost(id int64) int {
+	switch id {
+	case RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery:
+		return -1
+	}
+	return travelCostFor(id)
 }

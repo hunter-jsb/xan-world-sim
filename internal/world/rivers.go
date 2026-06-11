@@ -1,9 +1,10 @@
 package world
 
 import (
-	"container/heap"
 	"fmt"
 	"sort"
+
+	"github.com/hunterjsb/xan-world-sim/internal/pqueue"
 )
 
 // River carries the identity and a display name for a single river,
@@ -142,47 +143,24 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 	// lakes), and is grounded in the resolution of the grid, not a
 	// tunable knob.
 	const minLakeClusterCells = 3
-	lakeSet := make(map[[2]int]bool)
-	visited := make(map[[2]int]bool)
+	var seeds [][2]int
 	for c := range candidates {
-		if visited[c] {
-			continue
-		}
-		var component [][2]int
-		queue := [][2]int{c}
-		visited[c] = true
-		for len(queue) > 0 {
-			head := queue[0]
-			queue = queue[1:]
-			component = append(component, head)
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					if dx == 0 && dy == 0 {
-						continue
-					}
-					n := [2]int{head[0] + dx, head[1] + dy}
-					if !candidates[n] || visited[n] {
-						continue
-					}
-					visited[n] = true
-					queue = append(queue, n)
-				}
-			}
-		}
-		if len(component) >= minLakeClusterCells {
-			for _, cell := range component {
-				lakeSet[cell] = true
-			}
-		}
+		seeds = append(seeds, c)
 	}
+	sortYX(seeds)
 
 	// Don't filter river cells just because they're also lake cells.
 	// In real hydrology a river flows *through* a lake; we render the
 	// river layer over the region layer, so a cell that's both will
 	// show as a river — which is geologically correct.
 	var lakes []LakeCell
-	for cell := range lakeSet {
-		lakes = append(lakes, LakeCell{X: int64(cell[0]), Y: int64(cell[1])})
+	for _, comp := range components(seeds, func(p [2]int) bool { return candidates[p] }) {
+		if len(comp) < minLakeClusterCells {
+			continue
+		}
+		for _, cell := range comp {
+			lakes = append(lakes, LakeCell{X: int64(cell[0]), Y: int64(cell[1])})
+		}
 	}
 	return rivers, riverCells, lakes
 }
@@ -206,8 +184,7 @@ func fillPits(elev [][]float64, bedrock [][]BedrockCell) {
 		visited[y] = make([]bool, Width)
 	}
 
-	var queue priorityQueue
-	heap.Init(&queue)
+	queue := pqueue.New(func(a, b pqItem) bool { return a.elev < b.elev })
 
 	// Seed the queue with sea cells and all map-edge cells. These are
 	// the boundary — water reaching them has somewhere to go.
@@ -216,23 +193,17 @@ func fillPits(elev [][]float64, bedrock [][]BedrockCell) {
 			isEdge := x == 0 || x == Width-1 || y == 0 || y == Height-1
 			isSea := bedrock[y][x].Elevation <= 0
 			if isEdge || isSea {
-				heap.Push(&queue, pqItem{x: x, y: y, elev: elev[y][x]})
+				queue.Push(pqItem{x: x, y: y, elev: elev[y][x]})
 				visited[y][x] = true
 			}
 		}
 	}
 
-	dirs := [8]struct{ dx, dy int }{
-		{-1, -1}, {0, -1}, {1, -1},
-		{-1, 0}, {1, 0},
-		{-1, 1}, {0, 1}, {1, 1},
-	}
-
 	for queue.Len() > 0 {
-		top := heap.Pop(&queue).(pqItem)
-		for _, d := range dirs {
-			nx, ny := top.x+d.dx, top.y+d.dy
-			if nx < 0 || nx >= Width || ny < 0 || ny >= Height {
+		top := queue.Pop()
+		for _, d := range dirs8 {
+			nx, ny := top.x+d[0], top.y+d[1]
+			if !inBounds(nx, ny) {
 				continue
 			}
 			if visited[ny][nx] {
@@ -243,7 +214,7 @@ func fillPits(elev [][]float64, bedrock [][]BedrockCell) {
 			if bedrock[ny][nx].Elevation > 0 && elev[ny][nx] <= top.elev {
 				elev[ny][nx] = top.elev + epsilon
 			}
-			heap.Push(&queue, pqItem{x: nx, y: ny, elev: elev[ny][nx]})
+			queue.Push(pqItem{x: nx, y: ny, elev: elev[ny][nx]})
 		}
 	}
 }
@@ -251,20 +222,6 @@ func fillPits(elev [][]float64, bedrock [][]BedrockCell) {
 type pqItem struct {
 	x, y int
 	elev float64
-}
-
-type priorityQueue []pqItem
-
-func (h priorityQueue) Len() int            { return len(h) }
-func (h priorityQueue) Less(i, j int) bool  { return h[i].elev < h[j].elev }
-func (h priorityQueue) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *priorityQueue) Push(x interface{}) { *h = append(*h, x.(pqItem)) }
-func (h *priorityQueue) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[:n-1]
-	return x
 }
 
 type flowVec struct{ dx, dy int }
@@ -440,4 +397,112 @@ func traceRivers(bedrock [][]BedrockCell, flowDir [][]flowVec, accum [][]int, th
 	}
 
 	return rivers, cells
+}
+
+// nameRivers replaces placeholder "River N" labels with seeded phoneme
+// names. Naming is anchored to each river's headwater coords + world
+// seed, not to its ID — so the same river retains its name across kya
+// even though its length scales with climate.
+func (w *World) nameRivers() {
+	if len(w.RiverInfo) == 0 {
+		return
+	}
+	headOf := make(map[int64]RiverCell, len(w.RiverInfo))
+	for _, rc := range w.Rivers {
+		if rc.Ord == 1 {
+			headOf[rc.RiverID] = rc
+		}
+	}
+	for i := range w.RiverInfo {
+		head, ok := headOf[w.RiverInfo[i].ID]
+		if !ok {
+			continue
+		}
+		w.RiverInfo[i].Name = generateName(
+			nameSeedForCell(w.Seed, head.X, head.Y))
+	}
+}
+
+// computeDrainage counts, for each river, how many other rivers
+// (including itself) flow into it transitively. The merge target is
+// detected from the river's tail cell: among 8-neighbors that sit on a
+// *different* river, pick the one with lowest bedrock elevation
+// (steepest descent). That neighbor's river is the merge target. If no
+// such neighbor exists, the river reaches sea or boundary — it's a
+// "trunk" candidate.
+//
+// Drainage propagation: each river contributes 1 to itself and to
+// every ancestor in its merge chain. The river with maximum drainage
+// is the cradle's "Mississippi" from the lore.
+func (w *World) computeDrainage(bedrock [][]BedrockCell) {
+	if len(w.RiverInfo) == 0 {
+		return
+	}
+	groups := make(map[int64][]RiverCell, len(w.RiverInfo))
+	for _, r := range w.Rivers {
+		groups[r.RiverID] = append(groups[r.RiverID], r)
+	}
+	for id := range groups {
+		sort.Slice(groups[id], func(i, j int) bool { return groups[id][i].Ord < groups[id][j].Ord })
+	}
+	riverAt := make(map[[2]int]int64, len(w.Rivers))
+	for _, r := range w.Rivers {
+		riverAt[[2]int{int(r.X), int(r.Y)}] = r.RiverID
+	}
+	mergeTarget := make(map[int64]int64, len(w.RiverInfo))
+	for id, group := range groups {
+		tail := group[len(group)-1]
+		tx, ty := int(tail.X), int(tail.Y)
+		// flowRivers stops a chain when it would walk into a cell
+		// already claimed by another river — so the tail's flow
+		// direction *must* lead into another river's cell. We don't
+		// have flowDir here; we approximate by picking the 8-neighbor
+		// on a different river with the lowest bedrock elevation
+		// (steepest descent target). Don't compare against the tail's
+		// elevation because pit-fill artifacts can leave the merge
+		// target slightly higher in raw bedrock terms — what we know
+		// for sure is the chain ended because *some* adjacent
+		// different-river cell was the next flow step.
+		var bestID int64 = -1
+		bestElev := 1e18
+		for _, d := range dirs8 {
+			nx, ny := tx+d[0], ty+d[1]
+			if !inBounds(nx, ny) {
+				continue
+			}
+			nID, ok := riverAt[[2]int{nx, ny}]
+			if !ok || nID == id {
+				continue
+			}
+			if nElev := bedrock[ny][nx].Elevation; nElev < bestElev {
+				bestElev = nElev
+				bestID = nID
+			}
+		}
+		if bestID > 0 {
+			mergeTarget[id] = bestID
+		}
+	}
+	drainage := make(map[int64]int64, len(w.RiverInfo))
+	// Each river contributes 1 to itself and 1 to each ancestor.
+	// Visited set guards against pathological cycles in mergeTarget
+	// (the elevation-min heuristic for merge detection isn't truly
+	// guaranteed acyclic, even though flow direction is).
+	for _, ri := range w.RiverInfo {
+		cur := ri.ID
+		drainage[cur]++
+		visited := map[int64]bool{cur: true}
+		for {
+			next, ok := mergeTarget[cur]
+			if !ok || visited[next] {
+				break
+			}
+			drainage[next]++
+			visited[next] = true
+			cur = next
+		}
+	}
+	for i := range w.RiverInfo {
+		w.RiverInfo[i].Drainage = drainage[w.RiverInfo[i].ID]
+	}
 }
