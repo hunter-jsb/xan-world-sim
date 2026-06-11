@@ -65,6 +65,9 @@ type model struct {
 	// politicalMode tints the map by realm instead of terrain.
 	politicalMode bool
 
+	// showHelp displays the glyph legend and key reference (H toggles).
+	showHelp bool
+
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
@@ -263,6 +266,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.kya, m.era = next, world.EraForKya(next)
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
+
+		// Help: glyph legend + key reference, hidden by default.
+		case "H":
+			m.showHelp = !m.showHelp
 
 		// Political map mode: realm-tinted territory instead of terrain.
 		case "p":
@@ -499,20 +506,35 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(render.InfoPanel(m.cellInfoAt(m.curX, m.curY)))
 	b.WriteString("\n\n")
-	b.WriteString(m.legend)
-	b.WriteString("\n\n")
-	expHint := "s expedition to cursor"
+	if m.showHelp {
+		b.WriteString(m.legend)
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("hjkl cursor   s expedition to cursor   y depart   p political map"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("] / [ ±5ka   } / { ±25ka   e now/LGM   r reroll   H close help   q quit"))
+		b.WriteString("\n\n")
+	}
+	// Footer: only what matters right now — modal expedition prompts,
+	// the help key, and the status line. The full reference lives
+	// behind H.
+	var hints []string
 	if m.exp != nil {
 		switch m.exp.phase {
 		case expPending:
-			expHint = "y depart   s cancel"
+			hints = append(hints, "y depart   s cancel")
 		case expRunning:
-			expHint = fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays())
+			hints = append(hints, fmt.Sprintf("s abandon (day %d/%d)", m.exp.day, m.exp.totalDays()))
 		case expArrived:
-			expHint = "s conclude expedition"
+			hints = append(hints, "s conclude expedition")
 		}
 	}
-	b.WriteString(dimStyle.Render("hjkl cursor   " + expHint + "   p politics   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
+	if m.showHelp {
+		hints = append(hints, "H close help")
+	} else {
+		hints = append(hints, "H help")
+	}
+	hints = append(hints, "q quit")
+	b.WriteString(dimStyle.Render(strings.Join(hints, "   ")))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
@@ -595,6 +617,7 @@ func main() {
 		minY:    minY,
 		maxX:    maxX,
 		maxY:    maxY,
+		status:  "press H for the legend and keys",
 	}
 	m.buildLookups()
 	m.rebuildGrid()
