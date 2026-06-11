@@ -69,6 +69,9 @@ type model struct {
 	// all input; options dispatch by action ID in handlePopupChoice.
 	popup *popupState
 
+	// pois is every named place in (y, x) hop order — w/b targets.
+	pois []poi
+
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
 	legend  string
@@ -135,11 +138,13 @@ const (
 	popDepart    popupAction = "depart"          // confirm a proposed expedition
 	popCancelExp popupAction = "cancel-expedition"
 	popConclude  popupAction = "conclude-expedition"
+	popJumpPOI   popupAction = "jump-poi" // arg = index into m.pois
 )
 
 type popupOption struct {
 	label  string
 	action popupAction
+	arg    int // action payload (e.g., POI index); 0 when unused
 }
 
 // popupState is one modal: a title, pre-styled body lines, and an
@@ -236,7 +241,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.popup.opts) == 0 {
 					return m.dismissPopup()
 				}
-				return m.handlePopupChoice(m.popup.opts[m.popup.sel].action)
+				return m.handlePopupChoice(m.popup.opts[m.popup.sel])
 			}
 			return m, nil
 		}
@@ -323,6 +328,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 
+		// POI navigation: vim-style word-hop across named places.
+		case "w":
+			m.jumpPOI(1)
+		case "b":
+			m.jumpPOI(-1)
+		case "o":
+			m.openPOIPopup()
+
 		// Help: glyph legend + key reference, in a popup.
 		case "H":
 			m.openHelpPopup()
@@ -389,7 +402,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					fmt.Sprintf("The %s expedition reached (%d,%d)", e.fromName, e.destX, e.destY),
 					fmt.Sprintf("after %d days on the road.", e.totalDays()),
 				},
-				opts:  []popupOption{{"Conclude the expedition", popConclude}},
+				opts:  []popupOption{{label: "Conclude the expedition", action: popConclude}},
 				cellX: e.destX, cellY: e.destY,
 			}
 			m.mapStr = m.buildMap()
@@ -449,6 +462,7 @@ func (m *model) buildLookups() {
 		m.territoryAt[[2]int64{t.X, t.Y}] = t
 	}
 	m.dangerMap = buildDangerMap(m.data.features)
+	m.pois = buildPOIs(m.data)
 }
 
 // buildGridBuf constructs the grid for the active view mode.
@@ -734,12 +748,19 @@ func (m model) dismissPopup() (tea.Model, tea.Cmd) {
 }
 
 // handlePopupChoice dispatches the chosen option's action.
-func (m model) handlePopupChoice(action popupAction) (tea.Model, tea.Cmd) {
+func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 	pop := m.popup
 	m.popup = nil
-	switch action {
+	switch opt.action {
 	case popClose:
 		// just closes
+
+	case popJumpPOI:
+		if opt.arg >= 0 && opt.arg < len(m.pois) {
+			p := m.pois[opt.arg]
+			m.curX, m.curY = p.X, p.Y
+			m.status = fmt.Sprintf("→ %s (%s)", p.Name, render.KindDisplay(p.Kind))
+		}
 
 	case popSendExp:
 		m.mapStr = m.buildMap()
@@ -827,9 +848,9 @@ func (m *model) openCellPopup() {
 	}
 	opts := []popupOption{}
 	if m.exp == nil && m.pathCellCost(m.curX, m.curY) >= 0 {
-		opts = append(opts, popupOption{"Send expedition here", popSendExp})
+		opts = append(opts, popupOption{label: "Send expedition here", action: popSendExp})
 	}
-	opts = append(opts, popupOption{"Close", popClose})
+	opts = append(opts, popupOption{label: "Close", action: popClose})
 	m.popup = &popupState{
 		title: title, body: body, opts: opts,
 		cellX: m.curX, cellY: m.curY,
@@ -841,13 +862,14 @@ func (m *model) openCellPopup() {
 func (m *model) openHelpPopup() {
 	body := strings.Split(m.legend, "\n")
 	body = append(body, "",
-		dimStyle.Render("hjkl / arrows cursor   enter inspect cell   s expedition to cursor"),
-		dimStyle.Render("p political map   ] / [ ±5ka   } / { (or shift+arrows) ±25ka"),
-		dimStyle.Render("e now/LGM   r reroll   H help   q quit"))
+		dimStyle.Render("hjkl / arrows cursor   w / b next/prev place   o list places"),
+		dimStyle.Render("enter inspect cell   s expedition to cursor   p political map"),
+		dimStyle.Render("] / [ ±5ka   } / { (or shift+arrows) ±25ka   e now/LGM   r reroll"),
+		dimStyle.Render("H help   q quit"))
 	m.popup = &popupState{
 		title: "the cradle — legend & keys",
 		body:  body,
-		opts:  []popupOption{{"Close", popClose}},
+		opts:  []popupOption{{label: "Close", action: popClose}},
 	}
 	m.mapStr = m.buildMap()
 }
@@ -894,7 +916,7 @@ func (m *model) planExpedition(destX, destY int64) {
 			dimStyle.Render(fmt.Sprintf("the road: %d cells, %d days", len(path)-1, arrive[len(arrive)-1])),
 			dimStyle.Render("deep time stays locked until it returns or is abandoned"),
 		},
-		opts:  []popupOption{{"Depart", popDepart}, {"Cancel", popCancelExp}},
+		opts:  []popupOption{{label: "Depart", action: popDepart}, {label: "Cancel", action: popCancelExp}},
 		cellX: destX, cellY: destY,
 	}
 	m.status = ""

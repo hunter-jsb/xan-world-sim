@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -204,5 +205,35 @@ func TestGridBuf_RenderWithOverlay(t *testing.T) {
 		if w := lipgloss.Width(r); w != 30 {
 			t.Errorf("row %d visible width %d, want 30", i, w)
 		}
+	}
+}
+
+func TestPopupBox_ScrollWindow(t *testing.T) {
+	var opts []string
+	for i := 0; i < 30; i++ {
+		opts = append(opts, fmt.Sprintf("option %02d", i))
+	}
+	box := PopupBox("list", nil, opts, 20)
+	plain := stripANSI(strings.Join(box, "\n"))
+	if !strings.Contains(plain, "▸ option 20") {
+		t.Error("selected option not visible in scroll window")
+	}
+	for _, want := range []string{"above", "below"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("missing %q scroll indicator:\n%s", want, plain)
+		}
+	}
+	shown := strings.Count(plain, "option ")
+	if shown > popupMaxOptions {
+		t.Errorf("%d options visible, want ≤ %d", shown, popupMaxOptions)
+	}
+	// Selection at the very end clamps the window without panicking.
+	box = PopupBox("list", nil, opts, 29)
+	plain = stripANSI(strings.Join(box, "\n"))
+	if !strings.Contains(plain, "▸ option 29") {
+		t.Error("last option not visible when selected")
+	}
+	if strings.Contains(plain, "below") {
+		t.Error("window at the end should have nothing below")
 	}
 }

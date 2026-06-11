@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -20,6 +21,10 @@ var (
 
 // popupMaxContentWidth keeps boxes comfortably inside the 120-col map.
 const popupMaxContentWidth = 96
+
+// popupMaxOptions is how many option rows render at once; longer lists
+// scroll, windowed around the selection with above/below counters.
+const popupMaxOptions = 12
 
 // PopupBox renders a modal box as styled lines of equal visible width.
 // body lines may carry their own ANSI styling. options render below a
@@ -49,6 +54,33 @@ func PopupBox(title string, body []string, options []string, sel int) []string {
 		}
 	}
 
+	// Scroll window for long option lists, computed up front so the
+	// indicator rows participate in the width calculation.
+	start, end := 0, len(clippedOpts)
+	var above, below string
+	if end > popupMaxOptions {
+		start = sel - popupMaxOptions/2
+		if start < 0 {
+			start = 0
+		}
+		if start > len(clippedOpts)-popupMaxOptions {
+			start = len(clippedOpts) - popupMaxOptions
+		}
+		end = start + popupMaxOptions
+		if start > 0 {
+			above = fmt.Sprintf("  ⋯ %d above", start)
+			if w := lipgloss.Width(above); w > width {
+				width = w
+			}
+		}
+		if end < len(clippedOpts) {
+			below = fmt.Sprintf("  ⋯ %d below", len(clippedOpts)-end)
+			if w := lipgloss.Width(below); w > width {
+				width = w
+			}
+		}
+	}
+
 	pad := func(s string) string {
 		return s + strings.Repeat(" ", width-lipgloss.Width(s))
 	}
@@ -64,12 +96,18 @@ func PopupBox(title string, body []string, options []string, sel int) []string {
 	}
 	if len(clippedOpts) > 0 {
 		out = append(out, row(""))
-		for i, o := range clippedOpts {
+		if above != "" {
+			out = append(out, row(popupBorderStyle.Render(above)))
+		}
+		for i := start; i < end; i++ {
 			if i == sel {
-				out = append(out, row(popupSelStyle.Render("▸ "+o)))
+				out = append(out, row(popupSelStyle.Render("▸ "+clippedOpts[i])))
 			} else {
-				out = append(out, row(popupOptStyle.Render("  "+o)))
+				out = append(out, row(popupOptStyle.Render("  "+clippedOpts[i])))
 			}
+		}
+		if below != "" {
+			out = append(out, row(popupBorderStyle.Render(below)))
 		}
 	}
 	out = append(out, popupBorderStyle.Render("└"+strings.Repeat("─", width+2)+"┘"))

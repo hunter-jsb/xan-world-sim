@@ -563,6 +563,19 @@ func labelOr(label, kind string) string {
 	return label
 }
 
+// KindDisplay returns the best human label for a kind string: the seat
+// tier name, the feature label, the terrain label, or the kind itself.
+func KindDisplay(kind string) string {
+	spec := kinds[kind]
+	switch {
+	case spec.tierLabel != "":
+		return spec.tierLabel
+	case spec.featureLabel != "":
+		return spec.featureLabel
+	}
+	return labelOr(spec.label, kind)
+}
+
 func sep() string { return sepStyle.Render("   ·   ") }
 
 // InfoPanel returns a single styled line describing the cell under the cursor.
