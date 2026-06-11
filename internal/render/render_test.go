@@ -40,7 +40,7 @@ func TestKinds_CoversEveryRegionKind(t *testing.T) {
 }
 
 func TestKinds_SeatAndFeatureLabels(t *testing.T) {
-	for _, kind := range []string{"seat", "march", "headwater", "outhold", "reach"} {
+	for _, kind := range []string{"seat", "march", "headwater", "outhold", "reach", "capital"} {
 		if kinds[kind].tierLabel == "" {
 			t.Errorf("seat kind %q has no tierLabel", kind)
 		}

@@ -59,6 +59,15 @@ func Generate(seed int64, kya int) World {
 	w.buildRoads()
 	w.markMarshes()
 	w.nameLakes(lakes)
+
+	// Polity layer — runs last because it reads everything: rivers
+	// (navigability = control), roads, seats, dragon pressure. The
+	// political map is therefore climate-coupled: at the LGM there
+	// are no rivers, no Tributaries, no capital — and no crown.
+	capitalIdx := w.chooseCapital()
+	w.computeAllegiance(capitalIdx)
+	w.formRealms(capitalIdx)
+	w.claimTerritory()
 	return w
 }
 

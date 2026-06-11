@@ -22,7 +22,7 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, table := range []string{
 		"river_cells", "rivers", "region_cells", "seats", "lakes",
 		"passes", "road_cells", "roads", "dens", "drake_nests",
-		"wyvern_rookeries",
+		"wyvern_rookeries", "territory", "realms",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
@@ -47,9 +47,23 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	); err != nil {
 		return err
 	}
+	if err := insertAll(ctx, tx, "realm",
+		"INSERT INTO realms (id, name, is_crown, seat_x, seat_y) VALUES (?, ?, ?, ?, ?)",
+		w.Realms, func(r Realm) []any { return []any{r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY} },
+	); err != nil {
+		return err
+	}
 	if err := insertAll(ctx, tx, "seat",
-		"INSERT INTO seats (x, y, tier_id, name, pressure) VALUES (?, ?, ?, ?, ?)",
-		w.Seats, func(s NamedSeat) []any { return []any{s.X, s.Y, s.Tier, s.Name, s.Pressure} },
+		"INSERT INTO seats (x, y, tier_id, name, pressure, realm_id, allegiance) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		w.Seats, func(s NamedSeat) []any {
+			return []any{s.X, s.Y, s.Tier, s.Name, s.Pressure, s.RealmID, s.Allegiance}
+		},
+	); err != nil {
+		return err
+	}
+	if err := insertAll(ctx, tx, "territory",
+		"INSERT INTO territory (x, y, realm_id) VALUES (?, ?, ?)",
+		w.Territory, func(tc TerritoryCell) []any { return []any{tc.X, tc.Y, tc.RealmID} },
 	); err != nil {
 		return err
 	}

@@ -29,6 +29,7 @@ func TestGenerate_Invariants(t *testing.T) {
 			checkSeats(t, w)
 			checkFeatures(t, w)
 			checkRoads(t, w)
+			checkPolity(t, w)
 		})
 	}
 }
@@ -97,7 +98,7 @@ func checkSeats(t *testing.T, w World) {
 			t.Errorf("seat at (%d,%d) has no name", s.X, s.Y)
 		}
 		switch s.Tier {
-		case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach:
+		case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach, RegionCapital:
 		default:
 			t.Errorf("seat at (%d,%d) has non-seat tier %d", s.X, s.Y, s.Tier)
 		}
@@ -213,9 +214,13 @@ func checkRoads(t *testing.T, w World) {
 		if last.X != r.ToX || last.Y != r.ToY {
 			t.Errorf("road %d ends at (%d,%d), want To (%d,%d)", r.ID, last.X, last.Y, r.ToX, r.ToY)
 		}
-		// Every road terminates at a Tributary.
-		if got := g.regionAt([2]int{int(r.ToX), int(r.ToY)}); got != RegionSeat {
-			t.Errorf("road %d terminates on region %d, want Tributary (%d)", r.ID, got, RegionSeat)
+		// Every road terminates at a Tributary — or the capital, which
+		// was a Tributary when the roads were built and got promoted
+		// by the polity layer afterward.
+		switch got := g.regionAt([2]int{int(r.ToX), int(r.ToY)}); got {
+		case RegionSeat, RegionCapital:
+		default:
+			t.Errorf("road %d terminates on region %d, want Tributary or Capital", r.ID, got)
 		}
 	}
 	for id := range cellsByRoad {
@@ -228,6 +233,110 @@ func checkRoads(t *testing.T, w World) {
 		}
 		if !found {
 			t.Errorf("road cells reference unknown road %d", id)
+		}
+	}
+}
+
+func checkPolity(t *testing.T, w World) {
+	t.Helper()
+	realmByID := make(map[int64]Realm, len(w.Realms))
+	var crowns, capitals int
+	for _, r := range w.Realms {
+		if _, dup := realmByID[r.ID]; dup {
+			t.Errorf("duplicate realm ID %d", r.ID)
+		}
+		realmByID[r.ID] = r
+		if r.Name == "" {
+			t.Errorf("realm %d has no name", r.ID)
+		}
+		if r.IsCrown {
+			crowns++
+		}
+	}
+	if crowns > 1 {
+		t.Errorf("%d crown realms, want at most 1", crowns)
+	}
+
+	seatsPerRealm := make(map[int64]int)
+	for _, s := range w.Seats {
+		if s.Allegiance < 0 || s.Allegiance > 1 {
+			t.Errorf("seat %q allegiance %g out of [0,1]", s.Name, s.Allegiance)
+		}
+		if s.Tier == RegionCapital {
+			capitals++
+			if s.Allegiance != 1 {
+				t.Errorf("capital %q allegiance %g, want 1", s.Name, s.Allegiance)
+			}
+			if r := realmByID[s.RealmID]; !r.IsCrown {
+				t.Errorf("capital %q belongs to non-crown realm %d", s.Name, s.RealmID)
+			}
+		}
+		// Every seat belongs to exactly one existing realm (when any
+		// realms exist at all).
+		if len(w.Realms) > 0 {
+			if _, ok := realmByID[s.RealmID]; !ok {
+				t.Errorf("seat %q references unknown realm %d", s.Name, s.RealmID)
+			} else {
+				seatsPerRealm[s.RealmID]++
+			}
+		}
+	}
+	if capitals > 1 {
+		t.Errorf("%d capitals, want at most 1", capitals)
+	}
+	// A crown can only exist when a capital does.
+	if crowns == 1 && capitals == 0 {
+		t.Error("crown realm exists without a capital")
+	}
+	// Tributaries imply a capital (chooseCapital promotes one whenever
+	// any Tributary exists). Note: at the LGM there are no rivers, no
+	// Tributaries, and therefore no crown — the political climate
+	// coupling this layer exists for.
+	var tribs int
+	for _, s := range w.Seats {
+		if s.Tier == RegionSeat {
+			tribs++
+		}
+	}
+	if w.Kya == KyaOldWorld && capitals != 0 {
+		t.Error("LGM world has a capital — the crown should not survive the ice")
+	}
+
+	for _, r := range w.Realms {
+		if seatsPerRealm[r.ID] == 0 {
+			t.Errorf("realm %q (%d) has no seats", r.Name, r.ID)
+		}
+	}
+
+	// Territory references real realms, sits on real land cells, and
+	// has no duplicates.
+	g := gridOf(w.Regions)
+	seen := make(map[[2]int64]bool, len(w.Territory))
+	for _, tc := range w.Territory {
+		if _, ok := realmByID[tc.RealmID]; !ok {
+			t.Errorf("territory at (%d,%d) references unknown realm %d", tc.X, tc.Y, tc.RealmID)
+		}
+		k := [2]int64{tc.X, tc.Y}
+		if seen[k] {
+			t.Errorf("duplicate territory claim at (%d,%d)", tc.X, tc.Y)
+		}
+		seen[k] = true
+		if g.regionAt([2]int{int(tc.X), int(tc.Y)}) == 0 {
+			t.Errorf("territory at (%d,%d) claims a cell with no region", tc.X, tc.Y)
+		}
+	}
+	// Every seat with a realm sits inside its own realm's territory.
+	territoryOf := make(map[[2]int64]int64, len(w.Territory))
+	for _, tc := range w.Territory {
+		territoryOf[[2]int64{tc.X, tc.Y}] = tc.RealmID
+	}
+	for _, s := range w.Seats {
+		if s.RealmID == 0 {
+			continue
+		}
+		if got := territoryOf[[2]int64{s.X, s.Y}]; got != s.RealmID {
+			t.Errorf("seat %q at (%d,%d): cell claimed by realm %d, seat belongs to %d",
+				s.Name, s.X, s.Y, got, s.RealmID)
 		}
 	}
 }

@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "5963a43da707ba21a9bfc53b2d89093b0ff19ad5e618b8157819e34387cbe9c2"},
-		{KyaNow, 42, "a95799d2bba8b3e84103c9c45777abfbe9398ff9335ce995a349e86096946043"},
+		{KyaNow, 0, "6d011c87324813577867f56f3d9c8e26764e7a8dad712726e804ff75f936556f"},
+		{KyaNow, 42, "1f3f55adfd1b954fb431ff40c0dce6d02b6630dc500822e19dfea6047ec856e1"},
 		{KyaOldWorld, 0, "ef89aeb02aecfe9a2d2149fe4feb80dda6d624854f650ddce77078242be87643"},
 		{KyaOldWorld, 42, "858cb945fc3bebe0eef83cf7ec5920d91e12fb89f3103b4b58edfa1c2e0d08be"},
-		{100, 42, "d2650d40ab8289129a779634acd4e2f885b8c613649d7a4049d81493f670454c"}, // mid-cycle
+		{100, 42, "d5c0031213381942dfee02038e684f781c9fe4e069c53fea0f8932e0c3712d12"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
@@ -113,7 +113,27 @@ func hashWorld(w World) string {
 		return seats[i].X < seats[j].X
 	})
 	for _, s := range seats {
-		fmt.Fprintf(&b, "S(%d,%d,%d,%s,%.1f)|", s.X, s.Y, s.Tier, s.Name, s.Pressure)
+		fmt.Fprintf(&b, "S(%d,%d,%d,%s,%.1f,%d,%.3f)|",
+			s.X, s.Y, s.Tier, s.Name, s.Pressure, s.RealmID, s.Allegiance)
+	}
+
+	realms := make([]Realm, len(w.Realms))
+	copy(realms, w.Realms)
+	sort.Slice(realms, func(i, j int) bool { return realms[i].ID < realms[j].ID })
+	for _, r := range realms {
+		fmt.Fprintf(&b, "RM(%d,%s,%t,%d,%d)|", r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY)
+	}
+
+	terr := make([]TerritoryCell, len(w.Territory))
+	copy(terr, w.Territory)
+	sort.Slice(terr, func(i, j int) bool {
+		if terr[i].Y != terr[j].Y {
+			return terr[i].Y < terr[j].Y
+		}
+		return terr[i].X < terr[j].X
+	})
+	for _, tc := range terr {
+		fmt.Fprintf(&b, "T(%d,%d,%d)|", tc.X, tc.Y, tc.RealmID)
 	}
 
 	lakes := make([]LakeInfo, len(w.Lakes))

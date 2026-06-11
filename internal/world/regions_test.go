@@ -11,7 +11,7 @@ var allRegionIDs = []int64{
 	RegionAgrariaUpland, RegionLake, RegionForest, RegionTundra,
 	RegionMarsh, RegionSeat, RegionMarch, RegionHeadwater,
 	RegionOuthold, RegionReach, RegionPass, RegionDragonDen,
-	RegionDrakeNest, RegionWyvernRookery,
+	RegionDrakeNest, RegionWyvernRookery, RegionCapital,
 }
 
 func TestRegionKind_Total(t *testing.T) {

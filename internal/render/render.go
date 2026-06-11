@@ -126,6 +126,10 @@ var kinds = map[string]kindSpec{
 	// seat — bold gold, civilization marker on a river chain
 	"seat": {glyph: 'H', label: "seat", tierLabel: "Tributary",
 		shading: boldShade(100, 50, [5]string{"178", "214", "220", "226", "227"})},
+	// capital — the crown's seat; brightest gold-white on the map,
+	// "where the populous capitals are most likely to sit"
+	"capital": {glyph: 'K', label: "capital", tierLabel: "Crown Capital",
+		shading: boldShade(100, 50, [5]string{"220", "226", "227", "230", "231"})},
 	// march — slate steel, the wall against the mountain wilds; cooler
 	// and more austere than the gold of a salmon-lord's hall
 	"march": {glyph: 'M', label: "march", tierLabel: "March",
@@ -286,6 +290,33 @@ func renderRow(row []bufCell, curCol int) string {
 	return b.String()
 }
 
+// RealmColor returns the ANSI-256 code a realm renders with in the
+// political view: the crown is always gold; enclaves cycle through a
+// fixed palette of distinguishable hues keyed by realm ID, so a
+// realm's color is stable across cursor moves and re-renders.
+func RealmColor(realmID int64, isCrown bool) string {
+	if isCrown {
+		return "178" // crown gold
+	}
+	palette := [...]string{"168", "75", "114", "209", "105", "72", "131", "61"}
+	return palette[int(realmID)%len(palette)]
+}
+
+// unclaimedColor is what unclaimed (wilds) land wears in the
+// political view — dim enough to read "no realm holds this".
+const unclaimedColor = "238"
+
+// waterOrIceKind reports kinds that keep their geographic coloring in
+// the political view: water and ice are never claimed, and keeping
+// them recognizable anchors the political map to the geography.
+func waterOrIceKind(kind string) bool {
+	switch kind {
+	case "sea_brine", "sea_eastern", "lake", "glacier", "drowned":
+		return true
+	}
+	return false
+}
+
 // GridBuf pre-renders the map to per-row strings. Built once per regen
 // (the expensive path — all cells rendered); cursor moves re-render only
 // the single affected row, making them ~50× faster.
@@ -298,6 +329,40 @@ type GridBuf struct {
 // BuildGridBuf constructs a GridBuf from query results. Called once per
 // regen in the background; cursor updates call Render() which is fast.
 func BuildGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64) *GridBuf {
+	return buildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY,
+		func(kind string, elev float64, _, _ int64) (string, bool) {
+			return colorFor(kind, elev)
+		})
+}
+
+// BuildPoliticalGridBuf is the political-map variant: claimed land is
+// tinted by its owning realm's color, unclaimed land is dimmed to
+// wilds-gray, and water/ice keep their geographic colors so the map
+// stays anchored. Seats stay bold in their realm's color.
+func BuildPoliticalGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, territory []db.GetTerritoryInBoundsRow, minX, minY, maxX, maxY int64) *GridBuf {
+	realmAt := make(map[[2]int64]db.GetTerritoryInBoundsRow, len(territory))
+	for _, t := range territory {
+		realmAt[[2]int64{t.X, t.Y}] = t
+	}
+	colorOf := func(kind string, elev float64, x, y int64) (string, bool) {
+		if t, ok := realmAt[[2]int64{x, y}]; ok {
+			spec := kinds[kind]
+			return RealmColor(t.RealmID, t.IsCrown), spec.tierLabel != "" || spec.shading.bold
+		}
+		if waterOrIceKind(kind) {
+			return colorFor(kind, elev)
+		}
+		return unclaimedColor, false
+	}
+	return buildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY, colorOf)
+}
+
+// cellColorFn decides a terrain cell's color and boldness; the
+// political view keys on coordinates (realm), the geographic view
+// only on kind and elevation.
+type cellColorFn func(kind string, elev float64, x, y int64) (string, bool)
+
+func buildGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64, colorOf cellColorFn) *GridBuf {
 	width := int(maxX - minX + 1)
 	height := int(maxY - minY + 1)
 	if width <= 0 || height <= 0 {
@@ -322,7 +387,7 @@ func BuildGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBou
 		if spec, ok := kinds[c.Kind]; ok {
 			g = spec.glyph
 		}
-		col, bd := colorFor(c.Kind, c.Elevation)
+		col, bd := colorOf(c.Kind, c.Elevation, c.X, c.Y)
 		buf[gy][gx] = bufCell{g, col, bd}
 	}
 
@@ -471,6 +536,14 @@ type CellInfo struct {
 	// FeatureDetail is an optional annotation (e.g., lake bathymetry).
 	FeatureName   string
 	FeatureDetail string
+
+	// Populated when the cell (or seat) belongs to a realm's sphere.
+	// SeatStance is only set for seats — the lore label + allegiance,
+	// e.g. "sworn (0.82)".
+	RealmID      int64
+	RealmName    string
+	RealmIsCrown bool
+	SeatStance   string
 }
 
 // labelOr returns label unless it's empty, in which case the raw kind
@@ -499,6 +572,14 @@ func InfoPanel(info CellInfo) string {
 		seatSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, seatSt.Render(info.SeatName))
 		parts = append(parts, seatSt.Render(labelOr(spec.tierLabel, info.Kind)))
+		if info.RealmName != "" {
+			realmSt := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(RealmColor(info.RealmID, info.RealmIsCrown)))
+			parts = append(parts, realmSt.Render("realm "+info.RealmName))
+			if info.SeatStance != "" {
+				parts = append(parts, dimStyle.Render(info.SeatStance))
+			}
+		}
 		if info.SeatPressure > 0 {
 			parts = append(parts, dimStyle.Render(fmt.Sprintf("dragon pressure %.0f", info.SeatPressure)))
 		}
@@ -520,16 +601,29 @@ func InfoPanel(info CellInfo) string {
 		// River cell — show river name then underlying terrain.
 		parts = append(parts, riverStyle.Render("river "+info.RiverName))
 		parts = append(parts, dimStyle.Render(labelOr(spec.label, info.Kind)))
+		parts = append(parts, realmPart(info)...)
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 
 	default:
 		// Plain terrain.
 		terrSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, terrSt.Render(labelOr(spec.label, info.Kind)))
+		parts = append(parts, realmPart(info)...)
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 	}
 
 	return strings.Join(parts, sep())
+}
+
+// realmPart renders the "realm X" annotation for claimed non-seat
+// cells (seats render their own richer version with stance).
+func realmPart(info CellInfo) []string {
+	if info.RealmName == "" {
+		return nil
+	}
+	realmSt := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(RealmColor(info.RealmID, info.RealmIsCrown)))
+	return []string{realmSt.Render("realm " + info.RealmName)}
 }
 
 func Title(s string) string {

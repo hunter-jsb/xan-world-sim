@@ -6,7 +6,7 @@ package world
 // presence is handled by the caller (rivers cost 1).
 func travelCostFor(id int64) int {
 	switch id {
-	case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach:
+	case RegionSeat, RegionMarch, RegionHeadwater, RegionOuthold, RegionReach, RegionCapital:
 		return 2
 	case RegionPass:
 		return 3

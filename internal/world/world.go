@@ -34,6 +34,7 @@ const (
 	RegionDragonDen     int64 = 24
 	RegionDrakeNest     int64 = 25
 	RegionWyvernRookery int64 = 26
+	RegionCapital       int64 = 27
 )
 
 type RegionCell struct {
@@ -57,11 +58,37 @@ type RiverCell struct {
 // Chebyshev distance to the nearest dragon den, capped at 12 cells
 // (~600km, the implied raid radius from lore). 0 = safe heartland;
 // >8 = "constant dragon pressure" northern frontier.
+//
+// RealmID and Allegiance are set by the polity stages: which realm the
+// seat belongs to, and how firmly the crown holds it (1 = the capital
+// itself, 0 = beyond the crown's reach entirely).
 type NamedSeat struct {
-	X, Y     int64
-	Tier     int64
-	Name     string
-	Pressure float64
+	X, Y       int64
+	Tier       int64
+	Name       string
+	Pressure   float64
+	RealmID    int64
+	Allegiance float64
+}
+
+// Realm is one polity on the map: the Crown (the downstream heartland
+// power centered on the capital) or an independent frontier enclave.
+// SeatX/SeatY locate the realm's leading hall — the capital for the
+// crown, the eldest hall for an enclave — and the realm takes that
+// hall's name (the hall stands for the realm, as halls do).
+type Realm struct {
+	ID           int64
+	Name         string
+	IsCrown      bool
+	SeatX, SeatY int64
+}
+
+// TerritoryCell assigns one land cell to a realm's sphere of control —
+// the realm whose seat can reach it cheapest, within patrol range.
+// Cells beyond every realm's reach are unclaimed wilds and have no row.
+type TerritoryCell struct {
+	X, Y    int64
+	RealmID int64
 }
 
 // LakeInfo names a lake — one entry per connected cluster of RegionLake
@@ -160,14 +187,16 @@ type World struct {
 	Climate ClimateState
 
 	Regions   []RegionCell
-	RiverInfo []River       // (id, name) — populated alongside Rivers
-	Rivers    []RiverCell   // (river_id, x, y, ord)
-	Seats     []NamedSeat   // settlements (Tributary, March, Headwater, Reach, Outhold)
-	Lakes     []LakeInfo    // named lake clusters (one per connected component)
-	Passes    []PassInfo    // mountain passes through the ridge
-	Roads     []Road        // trade routes from each non-Tributary seat
-	RoadCells []RoadCell    // cells along each road
-	Dens      []DenInfo     // dragon dens at mountain peaks
-	Nests     []NestInfo    // drake nests at foothill peaks
-	Rookeries []RookeryInfo // wyvern rookeries on cliffs
+	RiverInfo []River         // (id, name) — populated alongside Rivers
+	Rivers    []RiverCell     // (river_id, x, y, ord)
+	Seats     []NamedSeat     // settlements (Tributary, March, Headwater, Reach, Outhold)
+	Lakes     []LakeInfo      // named lake clusters (one per connected component)
+	Passes    []PassInfo      // mountain passes through the ridge
+	Roads     []Road          // trade routes from each non-Tributary seat
+	RoadCells []RoadCell      // cells along each road
+	Dens      []DenInfo       // dragon dens at mountain peaks
+	Nests     []NestInfo      // drake nests at foothill peaks
+	Rookeries []RookeryInfo   // wyvern rookeries on cliffs
+	Realms    []Realm         // polities: the Crown + independent enclaves
+	Territory []TerritoryCell // realm sphere-of-control per claimed land cell
 }

@@ -97,6 +97,8 @@ func TestPersist_RoundTrip(t *testing.T) {
 			{"dens", len(w.Dens)},
 			{"drake_nests", len(w.Nests)},
 			{"wyvern_rookeries", len(w.Rookeries)},
+			{"realms", len(w.Realms)},
+			{"territory", len(w.Territory)},
 		}
 		for _, c := range counts {
 			var n int

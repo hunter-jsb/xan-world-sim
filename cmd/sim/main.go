@@ -56,10 +56,14 @@ type model struct {
 	data worldData
 
 	// Lookup maps built from raw data for O(1) cursor inspection.
-	cellAt    map[[2]int64]db.GetCellsInBoundsRow
-	riverAt   map[[2]int64]string // coord → river name
-	seatAt    map[[2]int64]db.GetSeatsInBoundsRow
-	featureAt map[[2]int64]db.GetNamedFeaturesInBoundsRow
+	cellAt      map[[2]int64]db.GetCellsInBoundsRow
+	riverAt     map[[2]int64]string // coord → river name
+	seatAt      map[[2]int64]db.GetSeatsInBoundsRow
+	featureAt   map[[2]int64]db.GetNamedFeaturesInBoundsRow
+	territoryAt map[[2]int64]db.GetTerritoryInBoundsRow
+
+	// politicalMode tints the map by realm instead of terrain.
+	politicalMode bool
 
 	gridBuf *render.GridBuf // pre-rendered grid; Render() is fast on cursor moves
 	mapStr  string
@@ -84,11 +88,12 @@ type model struct {
 
 // worldData bundles the viewport query results the TUI renders from.
 type worldData struct {
-	cells    []db.GetCellsInBoundsRow
-	rivers   []db.GetRiverCellsInBoundsRow
-	roads    []db.GetRoadCellsInBoundsRow
-	seats    []db.GetSeatsInBoundsRow
-	features []db.GetNamedFeaturesInBoundsRow
+	cells     []db.GetCellsInBoundsRow
+	rivers    []db.GetRiverCellsInBoundsRow
+	roads     []db.GetRoadCellsInBoundsRow
+	seats     []db.GetSeatsInBoundsRow
+	features  []db.GetNamedFeaturesInBoundsRow
+	territory []db.GetTerritoryInBoundsRow
 }
 
 // fetchWorldData loads everything in the viewport in one place — used
@@ -119,6 +124,10 @@ func fetchWorldData(ctx context.Context, q *db.Queries, minX, minY, maxX, maxY i
 	d.features, err = q.GetNamedFeaturesInBounds(ctx, minX, maxX, minY, maxY)
 	if err != nil {
 		return d, fmt.Errorf("features: %w", err)
+	}
+	d.territory, err = q.GetTerritoryInBounds(ctx, minX, maxX, minY, maxY)
+	if err != nil {
+		return d, fmt.Errorf("territory: %w", err)
 	}
 	return d, nil
 }
@@ -196,6 +205,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("←← %dkya", next)
 			return m, m.regen(m.seed, next)
 
+		// Political map mode: realm-tinted territory instead of terrain.
+		case "p":
+			m.politicalMode = !m.politicalMode
+			if m.politicalMode {
+				m.status = "political map"
+			} else {
+				m.status = "terrain map"
+			}
+			m.rebuildGrid()
+			m.mapStr = m.buildMap()
+
 		// Expedition: s sets/clears the journey start at the cursor.
 		// While active, every cursor move recomputes the Dijkstra path.
 		case "s":
@@ -250,7 +270,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.data = msg.data
 		m.buildLookups()
-		m.gridBuf = render.BuildGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.minX, m.minY, m.maxX, m.maxY)
+		m.rebuildGrid()
 		// World changed — terrain costs shift, so stale paths are misleading.
 		m.expStart = nil
 		m.expPath = nil
@@ -280,7 +300,20 @@ func (m *model) buildLookups() {
 	for _, f := range m.data.features {
 		m.featureAt[[2]int64{f.X, f.Y}] = f
 	}
+	m.territoryAt = make(map[[2]int64]db.GetTerritoryInBoundsRow, len(m.data.territory))
+	for _, t := range m.data.territory {
+		m.territoryAt[[2]int64{t.X, t.Y}] = t
+	}
 	m.dangerMap = buildDangerMap(m.data.features)
+}
+
+// buildGridBuf constructs the grid for the active view mode.
+func (m *model) rebuildGrid() {
+	if m.politicalMode {
+		m.gridBuf = render.BuildPoliticalGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.data.territory, m.minX, m.minY, m.maxX, m.maxY)
+	} else {
+		m.gridBuf = render.BuildGridBuf(m.data.cells, m.data.rivers, m.data.roads, m.minX, m.minY, m.maxX, m.maxY)
+	}
 }
 
 // buildMap renders the grid using the cached GridBuf — only the cursor
@@ -305,6 +338,17 @@ func (m *model) cellInfoAt(x, y int64) render.CellInfo {
 	if s, ok := m.seatAt[[2]int64{x, y}]; ok {
 		info.SeatName = s.Name
 		info.SeatPressure = s.Pressure
+		if s.RealmName != "" {
+			info.RealmID = s.RealmID
+			info.RealmName = s.RealmName
+			info.RealmIsCrown = s.IsCrown
+			info.SeatStance = fmt.Sprintf("%s (%.2f)",
+				world.AllegianceStance(s.Allegiance), s.Allegiance)
+		}
+	} else if t, ok := m.territoryAt[[2]int64{x, y}]; ok {
+		info.RealmID = t.RealmID
+		info.RealmName = t.RealmName
+		info.RealmIsCrown = t.IsCrown
 	}
 	if f, ok := m.featureAt[[2]int64{x, y}]; ok {
 		info.FeatureName = f.Name
@@ -364,6 +408,9 @@ func (m model) View() string {
 	}
 	gI := world.GlacialIndex(m.kya)
 	title += dimStyle.Render("   glacial: ") + seedStyle.Render(fmt.Sprintf("%.2f", gI))
+	if m.politicalMode {
+		title += dimStyle.Render("   [") + statusStyle.Render("political") + dimStyle.Render("]")
+	}
 	if m.seed != 0 {
 		title += dimStyle.Render("   seed: ") + seedStyle.Render(fmt.Sprintf("%d", m.seed))
 	}
@@ -379,7 +426,7 @@ func (m model) View() string {
 	if m.expStart != nil {
 		expHint = fmt.Sprintf("s clear expedition (%d steps)", max(0, len(m.expPath)-1))
 	}
-	b.WriteString(dimStyle.Render("hjkl cursor   " + expHint + "   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
+	b.WriteString(dimStyle.Render("hjkl cursor   " + expHint + "   p politics   ] / [ ±5ka   } / { ±25ka   r reroll   e now/LGM   q quit"))
 	if m.status != "" {
 		b.WriteString("   ")
 		b.WriteString(statusStyle.Render(m.status))
@@ -464,7 +511,7 @@ func main() {
 		maxY:    maxY,
 	}
 	m.buildLookups()
-	m.gridBuf = render.BuildGridBuf(data.cells, data.rivers, data.roads, minX, minY, maxX, maxY)
+	m.rebuildGrid()
 	m.mapStr = m.buildMap()
 
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {

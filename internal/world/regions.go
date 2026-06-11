@@ -31,6 +31,7 @@ var kindByRegionID = map[int64]string{
 	RegionDragonDen:     "den",
 	RegionDrakeNest:     "nest",
 	RegionWyvernRookery: "rookery",
+	RegionCapital:       "capital",
 }
 
 var regionIDByKind = func() map[string]int64 {
