@@ -10,7 +10,7 @@ import (
 )
 
 const getCellsInBounds = `-- name: GetCellsInBounds :many
-SELECT rc.x, rc.y, r.kind, r.name, rc.elevation
+SELECT rc.x, rc.y, r.kind, r.name, rc.elevation, rc.drainage
 FROM region_cells rc
 JOIN regions r ON r.id = rc.region_id
 WHERE rc.x >= ? AND rc.x <= ? AND rc.y >= ? AND rc.y <= ?
@@ -29,6 +29,7 @@ type GetCellsInBoundsRow struct {
 	Kind      string  `json:"kind"`
 	Name      string  `json:"name"`
 	Elevation float64 `json:"elevation"`
+	Drainage  int64   `json:"drainage"`
 }
 
 func (q *Queries) GetCellsInBounds(ctx context.Context, arg GetCellsInBoundsParams) ([]GetCellsInBoundsRow, error) {
@@ -51,6 +52,7 @@ func (q *Queries) GetCellsInBounds(ctx context.Context, arg GetCellsInBoundsPara
 			&i.Kind,
 			&i.Name,
 			&i.Elevation,
+			&i.Drainage,
 		); err != nil {
 			return nil, err
 		}

@@ -128,3 +128,68 @@ func BuildEcoGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsIn
 			return ecoClassColor(kind)
 		})
 }
+
+// DrainageColor is the hydrology lens band: how much water passes
+// through a cell, log-scaled — quiet land in dry earth tones, then
+// brighter blues as creeks gather into trunks. Open water reads flat
+// deep blue (the sea is where drainage goes to die).
+func DrainageColor(kind string, drainage int64) (string, bool) {
+	if waterOrIceKind(kind) {
+		return "17", false
+	}
+	switch {
+	case drainage < 4:
+		return "237", false // dry interfluve
+	case drainage < 16:
+		return "60", false // damp ground
+	case drainage < 64:
+		return "67", false // creek
+	case drainage < 256:
+		return "39", false // stream
+	case drainage < 1024:
+		return "45", true // river
+	default:
+		return "51", true // trunk — the cradle's Mississippi
+	}
+}
+
+// BuildHydroGridBuf is the hydrology lens: drainage per cell, with
+// the caller bridging to its row data.
+func BuildHydroGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64, drainAt func(x, y int64) int64) *GridBuf {
+	return buildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY,
+		func(kind string, elev float64, x, y int64) (string, bool) {
+			return DrainageColor(kind, drainAt(x, y))
+		})
+}
+
+// DangerColor is the danger lens band: lair raid heat as the
+// expedition pathfinder prices it (live activity included in sim).
+// Safe ground stays near-black; the ramp climbs through ember to
+// open flame around den cores.
+func DangerColor(kind string, danger int) (string, bool) {
+	if waterOrIceKind(kind) {
+		return "236", false
+	}
+	switch {
+	case danger <= 0:
+		return "238", false // safe
+	case danger < 6:
+		return "58", false // uneasy
+	case danger < 12:
+		return "94", false // raided
+	case danger < 21:
+		return "130", false // dangerous
+	case danger < 33:
+		return "166", true // deadly
+	default:
+		return "196", true // a lair's own doorstep
+	}
+}
+
+// BuildDangerGridBuf is the danger lens.
+func BuildDangerGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64, dangerAt func(x, y int64) int) *GridBuf {
+	return buildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY,
+		func(kind string, elev float64, x, y int64) (string, bool) {
+			return DangerColor(kind, dangerAt(x, y))
+		})
+}

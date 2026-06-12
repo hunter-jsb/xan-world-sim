@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "06d73fc16741f83321b8c6d715de4756a53a2f93a748b4f6a3608218c86b03a0"},
-		{KyaNow, 42, "82bf3b4d6b058642e6d3a8271f12adb883ff963c358faf43aed042cf2d1740df"},
-		{KyaOldWorld, 0, "c2172e3094cb6bd8167caa6ebd8733faf597929e48eeaac255a2d0efbefb21b2"},
-		{KyaOldWorld, 42, "76d7080f6741d5bab321103305269674674d4e226dc37dab16afcf17364bb333"},
-		{100, 42, "72df3ba4f0efe243e809dced45a87b01eab65e7672f9193baebdd84d8562e39b"}, // mid-cycle
+		{KyaNow, 0, "9cc1dcaa48ae5bb214d9837d563e150803479c0425e53fe390a28a3e0c670768"},
+		{KyaNow, 42, "4b255741e432786a3a9ffdbf9b7b63726a8dbef6ff793554cae5e697491f5d44"},
+		{KyaOldWorld, 0, "37b136628fb255a0d2f65c634914ee4f73257b6ea4cb656c8c5d9b24a0701a71"},
+		{KyaOldWorld, 42, "76ee6b418efb4d86e56dfdbca439d63f1bd7c8d3b92975961286011c1fa59a4c"},
+		{100, 42, "c5922d511ac4a3d52e30e1614f2774861d8b5ae9f08ea728ce72484ccba2a49e"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
@@ -94,7 +94,7 @@ func hashWorld(w World) string {
 		return regs[i].RegionID < regs[j].RegionID
 	})
 	for _, r := range regs {
-		fmt.Fprintf(&b, "R(%d,%d,%d,%.1f)|", r.RegionID, r.X, r.Y, r.Elevation)
+		fmt.Fprintf(&b, "R(%d,%d,%d,%.1f,%d)|", r.RegionID, r.X, r.Y, r.Elevation, r.Drainage)
 	}
 
 	infos := make([]River, len(w.RiverInfo))

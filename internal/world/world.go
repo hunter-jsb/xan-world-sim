@@ -42,6 +42,7 @@ type RegionCell struct {
 	RegionID  int64
 	X, Y      int64
 	Elevation float64 // bedrock elevation (m), persisted for renderer shading
+	Drainage  int64   // flow accumulation (upstream land cells) — bedrock-derived, stable across kya
 }
 
 type RiverCell struct {

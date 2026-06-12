@@ -340,3 +340,28 @@ func checkPolity(t *testing.T, w World) {
 		}
 	}
 }
+
+// TestDrainage_RiversSitOnTrunks cross-pins the persisted drainage
+// against the river layer: every river cell rests on a region cell
+// whose drainage meets the river threshold, and the map has real
+// trunk drainage somewhere.
+func TestDrainage_RiversSitOnTrunks(t *testing.T) {
+	w := Generate(42, 0)
+	drainAt := make(map[[2]int64]int64, len(w.Regions))
+	var maxDrain int64
+	for _, rc := range w.Regions {
+		drainAt[[2]int64{rc.X, rc.Y}] = rc.Drainage
+		if rc.Drainage > maxDrain {
+			maxDrain = rc.Drainage
+		}
+	}
+	thr := int64(riverThreshold())
+	for _, r := range w.Rivers {
+		if d := drainAt[[2]int64{r.X, r.Y}]; d < thr {
+			t.Errorf("river cell (%d,%d) sits on drainage %d < threshold %d", r.X, r.Y, d, thr)
+		}
+	}
+	if maxDrain < thr*4 {
+		t.Errorf("max drainage %d — no trunk rivers? (threshold %d)", maxDrain, thr)
+	}
+}

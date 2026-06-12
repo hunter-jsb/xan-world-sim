@@ -84,7 +84,7 @@ type LakeCell struct {
 	Depth   float64
 }
 
-func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell, []LakeCell) {
+func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []RiverCell, []LakeCell, [][]int) {
 	// Copy bedrock elevations into a fillable working field. We'll
 	// raise pits in this copy without modifying bedrock — bedrock
 	// stays the source of truth for visualization and sea checks.
@@ -227,7 +227,7 @@ func flowRivers(bedrock [][]BedrockCell, threshold int, maxLen int) ([]River, []
 			}
 		}
 	}
-	return rivers, riverCells, lakes
+	return rivers, riverCells, lakes, accum
 }
 
 // fillPits raises depressions in the heightmap so every land cell has

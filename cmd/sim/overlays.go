@@ -87,6 +87,8 @@ const (
 	lensClimate
 	lensGeo
 	lensEco
+	lensHydro
+	lensDanger
 )
 
-var lensNames = []string{"terrain", "political", "climate", "geological", "ecological"}
+var lensNames = []string{"terrain", "political", "climate", "geological", "ecological", "hydrology", "danger"}

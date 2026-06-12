@@ -360,7 +360,9 @@ func (m *model) applySimData(force bool) {
 	}
 
 	m.buildLookups()
-	if territoryChanged || gridDirty {
+	// The danger lens reads the live danger map, which moves with lair
+	// activity every step — it rebuilds unconditionally while active.
+	if territoryChanged || gridDirty || m.lens == lensDanger {
 		m.rebuildGrid()
 	}
 }

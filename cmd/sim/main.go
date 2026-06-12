@@ -643,6 +643,12 @@ func (m *model) rebuildGrid() {
 		m.gridBuf = render.BuildGeoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
 	case lensEco:
 		m.gridBuf = render.BuildEcoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
+	case lensHydro:
+		m.gridBuf = render.BuildHydroGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY,
+			func(x, y int64) int64 { return m.cellAt[[2]int64{x, y}].Drainage })
+	case lensDanger:
+		m.gridBuf = render.BuildDangerGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY,
+			func(x, y int64) int { return m.dangerMap[[2]int64{x, y}] })
 	default:
 		m.gridBuf = render.BuildGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
 	}

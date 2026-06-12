@@ -40,9 +40,11 @@ func Generate(seed int64, kya int) World {
 	// index — at the glacial peak, length=0 (no rivers; water locked in
 	// ice). Lakes are a side-product of the same flow pass.
 	var lakes []LakeCell
-	w.RiverInfo, w.Rivers, lakes = flowRivers(bedrock,
+	var accum [][]int
+	w.RiverInfo, w.Rivers, lakes, accum = flowRivers(bedrock,
 		riverThreshold(),
 		riverMaxLenFor(w.Climate.GlacialIndex))
+	w.setDrainage(accum)
 	w.nameRivers()
 	w.computeDrainage(bedrock)
 
@@ -167,4 +169,14 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 		return RegionUnknown
 	}
 	return 0
+}
+
+// setDrainage stamps the flow-accumulation grid onto the region cells
+// — the bedrock's drainage map, identical across kya for a seed (it's
+// geology, not climate). The hydrology lens reads it.
+func (w *World) setDrainage(accum [][]int) {
+	for i := range w.Regions {
+		rc := &w.Regions[i]
+		rc.Drainage = int64(accum[rc.Y][rc.X])
+	}
 }

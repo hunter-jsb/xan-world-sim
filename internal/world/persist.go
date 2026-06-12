@@ -30,8 +30,8 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	if err := insertAll(ctx, tx, "region cell",
-		"INSERT INTO region_cells (region_id, x, y, elevation) VALUES (?, ?, ?, ?)",
-		w.Regions, func(c RegionCell) []any { return []any{c.RegionID, c.X, c.Y, c.Elevation} },
+		"INSERT INTO region_cells (region_id, x, y, elevation, drainage) VALUES (?, ?, ?, ?, ?)",
+		w.Regions, func(c RegionCell) []any { return []any{c.RegionID, c.X, c.Y, c.Elevation, c.Drainage} },
 	); err != nil {
 		return err
 	}

@@ -92,3 +92,33 @@ func TestLensBuilders_RenderCleanly(t *testing.T) {
 		}
 	}
 }
+
+// TestDrainageAndDangerBands: both ramps are total and distinct
+// across their working spans.
+func TestDrainageAndDangerBands(t *testing.T) {
+	seen := map[string]bool{}
+	for _, d := range []int64{1, 8, 32, 128, 512, 2048} {
+		c, _ := DrainageColor("cradle", d)
+		if c == "" {
+			t.Errorf("no drainage band for %d", d)
+		}
+		seen[c] = true
+	}
+	if len(seen) != 6 {
+		t.Errorf("drainage ramp has %d distinct bands over 6 spans", len(seen))
+	}
+	if c, _ := DrainageColor("sea_brine", 0); c != "17" {
+		t.Errorf("open water should read flat deep blue, got %s", c)
+	}
+	seen = map[string]bool{}
+	for _, d := range []int{0, 3, 8, 15, 25, 40} {
+		c, _ := DangerColor("cradle", d)
+		if c == "" {
+			t.Errorf("no danger band for %d", d)
+		}
+		seen[c] = true
+	}
+	if len(seen) != 6 {
+		t.Errorf("danger ramp has %d distinct bands over 6 spans", len(seen))
+	}
+}

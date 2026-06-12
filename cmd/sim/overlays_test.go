@@ -83,8 +83,8 @@ func TestFreezeTags(t *testing.T) {
 // TestLensCycle: p walks all five lenses and wraps; entering a slice
 // defaults to political and leaving restores the lens you had.
 func TestLensCycle(t *testing.T) {
-	if len(lensNames) != 5 {
-		t.Fatalf("%d lenses, want 5", len(lensNames))
+	if len(lensNames) != 7 {
+		t.Fatalf("%d lenses, want 7", len(lensNames))
 	}
 	m := &model{}
 	seen := map[int]bool{m.lens: true}
