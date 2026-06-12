@@ -42,19 +42,31 @@ func TestClimateBand_Ordering(t *testing.T) {
 	}
 }
 
-// TestGeoBand_SpansBedrock: distinct bands from the abyss to peaks.
-func TestGeoBand_SpansBedrock(t *testing.T) {
-	elevs := []float64{-3000, -1000, -100, 100, 500, 1000, 2000, 3000, 4000}
+// TestRockColor_LithologyTotal: every rock type the world can emit
+// reads distinctly, fresh lava glows, and young drift bolds.
+func TestRockColor_LithologyTotal(t *testing.T) {
 	seen := map[string]bool{}
-	for _, e := range elevs {
-		c, _ := geoBand(e)
+	for rock := int64(1); rock <= 7; rock++ {
+		c, _ := RockColor(rock, 100)
 		if c == "" {
-			t.Errorf("no band for %gm", e)
+			t.Errorf("rock %d has no color", rock)
 		}
 		seen[c] = true
 	}
-	if len(seen) != len(elevs) {
-		t.Errorf("only %d distinct bands across %d sample elevations", len(seen), len(elevs))
+	if len(seen) != 7 {
+		t.Errorf("only %d distinct colors across 7 rock types", len(seen))
+	}
+	if c, bold := RockColor(7, 5); c != "196" || !bold {
+		t.Errorf("fresh lava = (%s,%v), want glowing 196 bold", c, bold)
+	}
+	if c, bold := RockColor(7, 100); c == "196" || bold {
+		t.Errorf("old basalt = (%s,%v), want weathered and quiet", c, bold)
+	}
+	if _, bold := RockColor(5, 10); !bold {
+		t.Error("till the ice just left should read bold")
+	}
+	if _, bold := RockColor(5, 300); bold {
+		t.Error("ancient till should read quiet")
 	}
 }
 
@@ -71,9 +83,10 @@ func TestLensBuilders_RenderCleanly(t *testing.T) {
 		return world.Temperature(world.Latitude(int(y), world.DefaultLatTop, world.DefaultLatBottom),
 			elev, world.ClimateAt(0))
 	}
+	rockAt := func(x, y int64) (int64, int64) { return 1 + (x+y)%7, 100 }
 	builders := map[string]*GridBuf{
 		"climate": BuildClimateGridBuf(cells, nil, nil, 0, 0, 1, 1, tempAt),
-		"geo":     BuildGeoGridBuf(cells, nil, nil, 0, 0, 1, 1),
+		"geo":     BuildGeoGridBuf(cells, nil, nil, 0, 0, 1, 1, rockAt),
 		"eco":     BuildEcoGridBuf(cells, nil, nil, 0, 0, 1, 1),
 	}
 	for name, gb := range builders {

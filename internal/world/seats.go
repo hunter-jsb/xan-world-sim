@@ -168,6 +168,13 @@ func (w *World) placeReaches() {
 	for _, s := range w.Seats {
 		seatAt[[2]int64{s.X, s.Y}] = true
 	}
+	// A Reach never sits on a river — a hall on a navigable stretch is
+	// a Tributary by definition, and the river glyph would paint over
+	// the seat marker anyway.
+	riverAt := make(map[[2]int64]bool, len(w.Rivers))
+	for _, r := range w.Rivers {
+		riverAt[[2]int64{r.X, r.Y}] = true
+	}
 	type scored struct {
 		x, y int64
 		d    float64
@@ -180,7 +187,7 @@ func (w *World) placeReaches() {
 		default:
 			continue
 		}
-		if seatAt[[2]int64{rc.X, rc.Y}] {
+		if seatAt[[2]int64{rc.X, rc.Y}] || riverAt[[2]int64{rc.X, rc.Y}] {
 			continue
 		}
 		dx := float64(rc.X) - cx

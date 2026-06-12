@@ -22,7 +22,7 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, table := range []string{
 		"river_cells", "rivers", "region_cells", "seats", "lakes",
 		"passes", "road_cells", "roads", "dens", "drake_nests",
-		"wyvern_rookeries", "territory", "realms",
+		"wyvern_rookeries", "volcanoes", "territory", "realms",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
@@ -30,8 +30,10 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	if err := insertAll(ctx, tx, "region cell",
-		"INSERT INTO region_cells (region_id, x, y, elevation, drainage) VALUES (?, ?, ?, ?, ?)",
-		w.Regions, func(c RegionCell) []any { return []any{c.RegionID, c.X, c.Y, c.Elevation, c.Drainage} },
+		"INSERT INTO region_cells (region_id, x, y, elevation, drainage, rock, rock_age) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		w.Regions, func(c RegionCell) []any {
+			return []any{c.RegionID, c.X, c.Y, c.Elevation, c.Drainage, c.Rock, c.RockAge}
+		},
 	); err != nil {
 		return err
 	}
@@ -108,6 +110,14 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	if err := insertAll(ctx, tx, "rookery",
 		"INSERT INTO wyvern_rookeries (id, name, x, y, elevation) VALUES (?, ?, ?, ?, ?)",
 		w.Rookeries, func(r RookeryInfo) []any { return []any{r.ID, r.Name, r.X, r.Y, r.Elevation} },
+	); err != nil {
+		return err
+	}
+	if err := insertAll(ctx, tx, "volcano",
+		"INSERT INTO volcanoes (id, name, x, y, elevation, last_eruption_ago, eruptions) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		w.Volcanoes, func(v VolcanoInfo) []any {
+			return []any{v.ID, v.Name, v.X, v.Y, v.Elevation, v.LastAgo, v.Eruptions}
+		},
 	); err != nil {
 		return err
 	}

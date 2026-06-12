@@ -10,7 +10,7 @@ import (
 // turn off the noise (e.g., set all amplitudes to 0), this catches it.
 func TestElevationField_HasInternalVariation(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	bedrock := generateBedrock(rng)
+	bedrock, _ := generateBedrock(rng, 42, KyaNow)
 
 	type stats struct {
 		min, max, sum float64
@@ -69,7 +69,7 @@ func TestElevationField_HasInternalVariation(t *testing.T) {
 // should still have a multi-thousand-meter drop.
 func TestElevationField_CliffsPreserved(t *testing.T) {
 	rng := rand.New(rand.NewSource(0))
-	bedrock := generateBedrock(rng)
+	bedrock, _ := generateBedrock(rng, 0, KyaNow)
 
 	// Find a cliff cell and check it's still much higher than any
 	// adjacent cradle/foothill cell.

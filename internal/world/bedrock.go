@@ -7,10 +7,12 @@ import (
 )
 
 // BedrockZone identifies the geological structure a cell belongs to.
-// Bedrock is era-independent — geology is stable over the timescales
-// we care about. The cell's *surface appearance* (sea / glacier /
-// exposed land of various kinds) is computed from the bedrock zone,
-// the bedrock elevation, and the current climate state.
+// The zone layout is era-independent — the rift's architecture doesn't
+// move on our timescales — but the rock itself lives: elevations and
+// lithology evolve through the geological history in geology.go
+// (uplift, volcanism, ice, isostasy, erosion), and the cell's *surface
+// appearance* (sea / glacier / exposed land of various kinds) is then
+// computed from zone + evolved elevation + the current climate state.
 type BedrockZone uint8
 
 const (
@@ -73,10 +75,13 @@ const (
 	mountainNorthY = Height * 4 / 30  // y at x=mountainEndX-1
 )
 
-// BedrockCell is the era-independent geology at one (x,y) position.
+// BedrockCell is the geology at one (x,y) position at the generated
+// moment — the output of the history integration in geology.go.
 type BedrockCell struct {
 	Zone      BedrockZone
 	Elevation float64 // meters relative to present-day sea level (0)
+	Rock      int64   // topmost lithology (Rock* constants in geology.go)
+	RockAgo   int64   // ka before the generated moment the surface was laid
 }
 
 // roughElevationForZone is the initial height for erosion initialization.
@@ -247,65 +252,10 @@ const (
 	diffusionD   = 0.02 // hillslope diffusivity; smooths inter-cell noise
 )
 
-func generateBedrock(rng *rand.Rand) [][]BedrockCell {
-	mountainRow := genMountainRow(rng)
-	foothillThick := genFoothillThickness(rng)
-	coastX := genCoastX(rng)
-
-	// Phase 1: compute the bedrock zone for every cell.
-	zones := make([][]BedrockZone, Height)
-	for y := 0; y < Height; y++ {
-		zones[y] = make([]BedrockZone, Width)
-		for x := 0; x < Width; x++ {
-			zones[y][x] = bedrockZone(x, y, mountainRow, foothillThick, coastX)
-		}
-	}
-
-	// Phase 2: initial heights — zone base + per-cell noise.
-	// Every cell gets noise for internal variation; sea cells hold these
-	// values throughout (neither erosion nor diffusion touches them);
-	// land cells use this as the starting point for erosion.
-	// RNG order: y outer, x inner, every cell consumes one Float64.
-	elev := make([][]float64, Height)
-	for y := 0; y < Height; y++ {
-		elev[y] = make([]float64, Width)
-		for x := 0; x < Width; x++ {
-			z := zones[y][x]
-			base := roughElevationForZone(z)
-			amp := zoneAmplitude(z)
-			elev[y][x] = base + (rng.Float64()*2-1)*amp
-		}
-	}
-
-	// Phase 3: stream-power erosion + hillslope diffusion.
-	// Carves trunk valleys from high-drainage-area cells; mountain peaks
-	// near drainage divides are stable (low A, slow erosion); hillslope
-	// diffusion rounds sharp noise into smooth gradients. Sea cells are
-	// held fixed throughout as boundary conditions.
-	for range erosionSteps {
-		flowDir := computeFlowDirections(elev)
-		accum := flowAccumulationFromElev(elev, flowDir)
-		erodeStreamPower(elev, zones, flowDir, accum)
-		diffuseHillslope(elev, zones)
-		for y := 0; y < Height; y++ {
-			for x := 0; x < Width; x++ {
-				if isLandZone(zones[y][x]) && elev[y][x] < 0 {
-					elev[y][x] = 0 // rivers can't carve below sea level
-				}
-			}
-		}
-	}
-
-	// Phase 4: pack into BedrockCells.
-	out := make([][]BedrockCell, Height)
-	for y := 0; y < Height; y++ {
-		out[y] = make([]BedrockCell, Width)
-		for x := 0; x < Width; x++ {
-			out[y][x] = BedrockCell{Zone: zones[y][x], Elevation: elev[y][x]}
-		}
-	}
-	return out
-}
+// generateBedrock lives in geology.go now — the frame built here
+// (zones, noise, spin-up helpers below) is the state of the world at
+// geoStart, and the history integration carries it to the requested
+// moment.
 
 // zoneAmplitude is the maximum elevation deviation (in meters) added
 // as noise to cells of this zone. Calibrated to feel realistic for

@@ -5,14 +5,18 @@ import "math/rand"
 // Generate produces a deterministic world from the given seed and a
 // moment in geological time (kya = kiloyears before present).
 //
-// The pipeline is climate-driven and time-driven: a single bedrock
-// model (zones + elevations) is built once from the seed and is
-// stable across all kya — geology doesn't move on these timescales.
-// Climate (sea level, mean temp delta) at the given kya is then
-// applied per cell to derive whether the cell shows up as land,
-// sea, or glacier. As kya scrubs from 205 toward 0, the ice retreats
-// smoothly and Agraria submerges — both as consequences of the
-// climate cycle, not hardcoded snapshots.
+// The pipeline is climate-driven and time-driven twice over. The
+// bedrock's structural frame (zones) is built once from the seed and
+// is stable across all kya, but the rock itself has a history: from
+// that frame, geology.go integrates uplift, volcanism, glacial work,
+// isostasy, and erosion forward from geoStart to the requested kya —
+// a fixed timeline keyed to the seed alone, so the same eruption
+// happens at the same moment no matter where you scrub. Climate (sea
+// level, mean temp delta) at the given kya is then applied per cell
+// to derive whether the cell shows up as land, sea, glacier, or a
+// fresh lava field. As kya scrubs from 205 toward 0, the ice retreats
+// smoothly, Agraria submerges, volcanoes blow and their flows weather
+// — all consequences of the two timelines, not hardcoded snapshots.
 //
 // Each stage below is a named transform over the World; ordering
 // matters (later stages read the RegionIDs earlier stages wrote) and
@@ -20,7 +24,7 @@ import "math/rand"
 // combined output.
 func Generate(seed int64, kya int) World {
 	rng := rand.New(rand.NewSource(seed))
-	bedrock := generateBedrock(rng)
+	bedrock, volcanoes := generateBedrock(rng, seed, kya)
 
 	w := World{
 		Seed:      seed,
@@ -30,9 +34,11 @@ func Generate(seed int64, kya int) World {
 		LatBottom: DefaultLatBottom,
 		Orbital:   OrbitalAt(kya),
 		Climate:   ClimateAt(kya),
+		Volcanoes: volcanoes,
 	}
 
 	w.classifyRegions(bedrock)
+	w.stampVolcanoes()
 
 	// Rivers grow head-to-mouth as climate warms. Threshold is uniform
 	// (it just identifies the river network topology); the maximum
@@ -87,6 +93,8 @@ func (w *World) classifyRegions(bedrock [][]BedrockCell) {
 					X:         int64(x),
 					Y:         int64(y),
 					Elevation: b.Elevation,
+					Rock:      b.Rock,
+					RockAge:   b.RockAgo,
 				})
 			}
 		}
@@ -102,7 +110,10 @@ func (w *World) classifyRegions(bedrock [][]BedrockCell) {
 //     submerged-water — a frozen sea surface reads as glacier (ice
 //     shelf), not sea.
 //  3. Submerged water, mapped to whichever sea/basin the zone is in.
-//  4. Otherwise the zone's exposed-land identity.
+//  4. Fresh lava — a flow younger than lavaFreshKa is raw black rock
+//     no matter what zone it buried. It weathers back into the zone's
+//     identity as it ages (the lithology remembers; the surface heals).
+//  5. Otherwise the zone's exposed-land identity.
 func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 	seaLevel := climate.SeaLevelDelta
 
@@ -139,9 +150,15 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 		case BZEastBasin:
 			return RegionEastSea
 		default:
-			// land zones aren't normally below sea level
-			return RegionEastSea
+			// A land zone below sea level is a drowned valley — a
+			// channel the glacial rivers cut at a low stand, flooded
+			// when the warm sea came back.
+			return RegionDrowned
 		}
+	}
+
+	if b.Rock == RockLava && b.RockAgo <= lavaFreshKa {
+		return RegionLava
 	}
 
 	switch b.Zone {
@@ -171,12 +188,44 @@ func classify(b BedrockCell, lat float64, climate ClimateState) int64 {
 	return 0
 }
 
-// setDrainage stamps the flow-accumulation grid onto the region cells
-// — the bedrock's drainage map, identical across kya for a seed (it's
-// geology, not climate). The hydrology lens reads it.
+// stampVolcanoes marks each born vent's summit cell. Runs right after
+// classifyRegions and before any feature placement, so passes and
+// lairs (which scan for plain mountain cells) skip the vents on their
+// own.
+func (w *World) stampVolcanoes() {
+	if len(w.Volcanoes) == 0 {
+		return
+	}
+	at := make(map[[2]int64]bool, len(w.Volcanoes))
+	for _, v := range w.Volcanoes {
+		at[[2]int64{v.X, v.Y}] = true
+	}
+	for i := range w.Regions {
+		if at[[2]int64{w.Regions[i].X, w.Regions[i].Y}] {
+			w.Regions[i].RegionID = RegionVolcano
+		}
+	}
+}
+
+// setDrainage stamps the flow-accumulation grid onto the region cells.
+// Drainage is derived from the evolved bedrock, so it shifts with the
+// geological history — a lava dam or a moraine belt reroutes it. The
+// hydrology lens reads it.
+//
+// It also finishes the lithology: any land cell carrying real
+// upstream flow is a working floodplain, and a working floodplain's
+// surface is always young river silt — alluvium reworked flood by
+// flood, no matter what the ice or the volcanoes left there before.
+// Fresh lava resists (a river takes more than a season to cut a new
+// flow); it weathers first.
 func (w *World) setDrainage(accum [][]int) {
 	for i := range w.Regions {
 		rc := &w.Regions[i]
 		rc.Drainage = int64(accum[rc.Y][rc.X])
+		if rc.Drainage >= alluviumMinAccum && rc.Elevation > w.Climate.SeaLevelDelta &&
+			!(rc.Rock == RockLava && rc.RockAge <= lavaFreshKa) {
+			rc.Rock = RockAlluvium
+			rc.RockAge = 0
+		}
 	}
 }

@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "9cc1dcaa48ae5bb214d9837d563e150803479c0425e53fe390a28a3e0c670768"},
-		{KyaNow, 42, "4b255741e432786a3a9ffdbf9b7b63726a8dbef6ff793554cae5e697491f5d44"},
-		{KyaOldWorld, 0, "37b136628fb255a0d2f65c634914ee4f73257b6ea4cb656c8c5d9b24a0701a71"},
-		{KyaOldWorld, 42, "76ee6b418efb4d86e56dfdbca439d63f1bd7c8d3b92975961286011c1fa59a4c"},
-		{100, 42, "c5922d511ac4a3d52e30e1614f2774861d8b5ae9f08ea728ce72484ccba2a49e"}, // mid-cycle
+		{KyaNow, 0, "6055ea9ffd5efcd72734b259a568933ef14d0fc8d392eba718f2c39e3cdadc59"},
+		{KyaNow, 42, "04a1facae97d071482894df52b1dce0eb64739b065a318cba216ee20868b2e76"},
+		{KyaOldWorld, 0, "906809c78832b262eea3523b57cc9395586887b2f36d321d7aacb02ce125da63"},
+		{KyaOldWorld, 42, "6d3302e5b1ba59259cc8be0b4c8a172c1ee7c0ee2617923a3fe599eff2d63ac2"},
+		{100, 42, "b5037b0f49fb9d8e71a3a2a141031a6fde3546990af32463b365f0882d0f0ff1"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
@@ -94,7 +94,7 @@ func hashWorld(w World) string {
 		return regs[i].RegionID < regs[j].RegionID
 	})
 	for _, r := range regs {
-		fmt.Fprintf(&b, "R(%d,%d,%d,%.1f,%d)|", r.RegionID, r.X, r.Y, r.Elevation, r.Drainage)
+		fmt.Fprintf(&b, "R(%d,%d,%d,%.1f,%d,%d,%d)|", r.RegionID, r.X, r.Y, r.Elevation, r.Drainage, r.Rock, r.RockAge)
 	}
 
 	infos := make([]River, len(w.RiverInfo))
@@ -187,6 +187,13 @@ func hashWorld(w World) string {
 	sort.Slice(rooks, func(i, j int) bool { return rooks[i].ID < rooks[j].ID })
 	for _, r := range rooks {
 		fmt.Fprintf(&b, "W(%d,%d,%d,%.1f,%s)|", r.ID, r.X, r.Y, r.Elevation, r.Name)
+	}
+
+	vols := make([]VolcanoInfo, len(w.Volcanoes))
+	copy(vols, w.Volcanoes)
+	sort.Slice(vols, func(i, j int) bool { return vols[i].ID < vols[j].ID })
+	for _, v := range vols {
+		fmt.Fprintf(&b, "VO(%d,%d,%d,%.1f,%s,%d,%d)|", v.ID, v.X, v.Y, v.Elevation, v.Name, v.LastAgo, v.Eruptions)
 	}
 
 	rivs := make([]RiverCell, len(w.Rivers))

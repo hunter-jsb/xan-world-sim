@@ -36,13 +36,17 @@ const (
 	RegionWyvernRookery int64 = 26
 	RegionCapital       int64 = 27
 	RegionRuin          int64 = 28
+	RegionVolcano       int64 = 29
+	RegionLava          int64 = 30
 )
 
 type RegionCell struct {
 	RegionID  int64
 	X, Y      int64
 	Elevation float64 // bedrock elevation (m), persisted for renderer shading
-	Drainage  int64   // flow accumulation (upstream land cells) — bedrock-derived, stable across kya
+	Drainage  int64   // flow accumulation (upstream land cells), from the evolved bedrock
+	Rock      int64   // topmost lithology (Rock* constants) — the geological lens reads it
+	RockAge   int64   // ka before the world's moment the surface was laid
 }
 
 type RiverCell struct {
@@ -199,6 +203,7 @@ type World struct {
 	Dens      []DenInfo       // dragon dens at mountain peaks
 	Nests     []NestInfo      // drake nests at foothill peaks
 	Rookeries []RookeryInfo   // wyvern rookeries on cliffs
+	Volcanoes []VolcanoInfo   // born vents on the rift shoulder
 	Realms    []Realm         // polities: the Crown + independent enclaves
 	Territory []TerritoryCell // realm sphere-of-control per claimed land cell
 }

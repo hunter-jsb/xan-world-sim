@@ -167,6 +167,14 @@ var kinds = map[string]kindSpec{
 	// fearsome than drakes or dragons
 	"rookery": {glyph: 'w', label: "wyvern rookery", featureLabel: "wyvern rookery",
 		shading: shade(2500, 200, [5]string{"94", "137", "143", "180", "187"})},
+	// volcano — the rift's fire, bold warning-reds against the gray
+	// mountain row; taller cones burn brighter
+	"volcano": {glyph: '!', label: "volcano", featureLabel: "volcano",
+		shading: boldShade(2600, 300, [5]string{"52", "88", "124", "160", "196"})},
+	// lava field — a young flow, ember-dark; it weathers back into
+	// the land it buried within a few ka
+	"lava": {glyph: '&', label: "lava field",
+		shading: shade(400, 500, [5]string{"233", "52", "88", "124", "160"})},
 	"unknown": {glyph: '?', label: "unknown",
 		shading: shade(0, 1, [5]string{"99", "99", "99", "99", "99"})},
 	"drowned": {glyph: '_', label: "drowned",
@@ -580,6 +588,11 @@ type CellInfo struct {
 	RealmName    string
 	RealmIsCrown bool
 	SeatStance   string
+
+	// RockNote names the topmost lithology and how long ago it was
+	// laid (e.g. "glacial till, laid 12 ka ago") — shown for plain
+	// terrain and river cells.
+	RockNote string
 }
 
 // labelOr returns label unless it's empty, in which case the raw kind
@@ -651,6 +664,9 @@ func InfoPanel(info CellInfo) string {
 		parts = append(parts, riverStyle.Render("river "+info.RiverName))
 		parts = append(parts, dimStyle.Render(labelOr(spec.label, info.Kind)))
 		parts = append(parts, realmPart(info)...)
+		if info.RockNote != "" {
+			parts = append(parts, dimStyle.Render(info.RockNote))
+		}
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 
 	default:
@@ -658,6 +674,9 @@ func InfoPanel(info CellInfo) string {
 		terrSt := styleFor(info.Kind, info.Elev)
 		parts = append(parts, terrSt.Render(labelOr(spec.label, info.Kind)))
 		parts = append(parts, realmPart(info)...)
+		if info.RockNote != "" {
+			parts = append(parts, dimStyle.Render(info.RockNote))
+		}
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("elev %.0fm", info.Elev)))
 	}
 

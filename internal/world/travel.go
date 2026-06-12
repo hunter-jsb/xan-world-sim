@@ -20,6 +20,8 @@ func travelCostFor(id int64) int {
 		return 6
 	case RegionMarsh:
 		return 8
+	case RegionLava:
+		return 12 // razor aa and cooling crust — crossable, barely
 	case RegionPlateau:
 		return 15
 	case RegionDragonDen, RegionDrakeNest, RegionWyvernRookery:
@@ -43,7 +45,9 @@ func TravelCost(kind string) int {
 // nobody builds a trade road there.
 func roadBuildCost(id int64) int {
 	switch id {
-	case RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery:
+	case RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery, RegionLava:
+		// Nobody builds a trade road over fresh lava — it'll have
+		// weathered back into ordinary ground within a few ka anyway.
 		return -1
 	}
 	return travelCostFor(id)

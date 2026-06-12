@@ -5,11 +5,12 @@ import "github.com/hunterjsb/xan-world-sim/internal/db"
 // Lenses — alternative colorings of the same grid. Every lens is one
 // cellColorFn over the shared builder: terrain (the default kind
 // ramps), political (realm tint), climate (a temperature ramp fed by
-// the world's own Temperature function), geological (hypsometric
-// bedrock elevation — the rift and shelf story, biomes ignored), and
-// ecological (life zones: vegetation classes pop, civilization fades,
-// lairs glow as apex fauna). Glyphs never change — a lens recolors
-// the world, it doesn't redraw it.
+// the world's own Temperature function), geological (a true geologic
+// map — the topmost lithology laid down by the seed's own history of
+// fire, ice, and rivers), and ecological (life zones: vegetation
+// classes pop, civilization fades, lairs glow as apex fauna).
+// Glyphs never change — a lens recolors the world, it doesn't
+// redraw it.
 
 // BuildGridBufWith is the open variant of BuildGridBuf: callers
 // supply the lens's color function.
@@ -52,37 +53,45 @@ func BuildClimateGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCel
 		})
 }
 
-// geoBand is the hypsometric ramp over bedrock elevation: abyssal
-// blues below the waves, tans and umbers over the lowlands, gray
-// stone to white peaks. Biomes are ignored — this is the rock.
-func geoBand(elev float64) (string, bool) {
-	switch {
-	case elev < -2000:
-		return "17", false // abyssal
-	case elev < -500:
-		return "19", false // deep basin
-	case elev < 0:
-		return "26", false // shelf
-	case elev < 200:
-		return "65", false // coastal lowland
-	case elev < 800:
-		return "137", false // plain tan
-	case elev < 1500:
-		return "95", false // upland umber
-	case elev < 2500:
-		return "244", false // stone gray
-	case elev < 3500:
-		return "250", false // high stone
-	default:
-		return "255", true // peak white
+// RockColor is the geological lens band: the topmost lithology,
+// colored like a geologic map — shield pink, orogen umber, sediment
+// slate, alluvium yellow, till olive, loess gold, basalt
+// purple-black with fresh flows glowing. Bold marks ground the ice
+// or the fire left within the last ~20 ka. Rock numbering mirrors
+// world/geology.go's Rock* constants.
+//
+// Unlike the other lenses there is no flat water tint: the rock
+// doesn't care about the sea, so the lens X-rays straight through it
+// (and through the ice sheets) — glyphs still carry the water.
+func RockColor(rock, ageAgo int64) (string, bool) {
+	switch rock {
+	case 1:
+		return "168", false // basement shield — geologic-map pink
+	case 2:
+		return "95", false // orogenic rock — folded umber
+	case 3:
+		return "67", false // marine sediment — slate blue
+	case 4:
+		return "185", false // alluvium — quaternary yellow ribbons
+	case 5:
+		return "108", ageAgo <= 20 // glacial till — olive drift
+	case 6:
+		return "222", ageAgo <= 20 // loess — pale gold dust
+	case 7:
+		if ageAgo <= 15 {
+			return "196", true // fresh lava — still glowing
+		}
+		return "54", false // old basalt — purple-black
 	}
+	return "240", false // unsurveyed
 }
 
-// BuildGeoGridBuf is the geological lens: pure elevation, no biome.
-func BuildGeoGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64) *GridBuf {
+// BuildGeoGridBuf is the geological lens: lithology and its age, with
+// the caller bridging to its row data.
+func BuildGeoGridBuf(cells []db.GetCellsInBoundsRow, rivers []db.GetRiverCellsInBoundsRow, roads []db.GetRoadCellsInBoundsRow, minX, minY, maxX, maxY int64, rockAt func(x, y int64) (int64, int64)) *GridBuf {
 	return buildGridBuf(cells, rivers, roads, minX, minY, maxX, maxY,
 		func(kind string, elev float64, x, y int64) (string, bool) {
-			return geoBand(elev)
+			return RockColor(rockAt(x, y))
 		})
 }
 
@@ -98,8 +107,10 @@ func ecoClassColor(kind string) (string, bool) {
 		return "31", false // fresh water
 	case "glacier":
 		return "195", false // ice
-	case "mountain", "cliff", "plateau", "pass", "unknown":
+	case "mountain", "cliff", "plateau", "pass", "unknown", "volcano":
 		return "245", false // barren rock
+	case "lava":
+		return "238", false // sterile ground — succession hasn't started
 	case "tundra":
 		return "144", false // cold steppe
 	case "cradle", "doab", "agraria_upland":

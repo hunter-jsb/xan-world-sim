@@ -12,6 +12,7 @@ var allRegionIDs = []int64{
 	RegionMarsh, RegionSeat, RegionMarch, RegionHeadwater,
 	RegionOuthold, RegionReach, RegionPass, RegionDragonDen,
 	RegionDrakeNest, RegionWyvernRookery, RegionCapital, RegionRuin,
+	RegionVolcano, RegionLava,
 }
 
 func TestRegionKind_Total(t *testing.T) {
@@ -52,9 +53,9 @@ func TestTravelCost_FacadeMatchesCanonicalTable(t *testing.T) {
 }
 
 func TestRoadBuildCost_Overrides(t *testing.T) {
-	// Roads can't be built over the plateau or through lairs even
-	// though expeditions can slog across them.
-	for _, id := range []int64{RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery} {
+	// Roads can't be built over the plateau, through lairs, or across
+	// fresh lava even though expeditions can slog across them.
+	for _, id := range []int64{RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery, RegionLava} {
 		if got := roadBuildCost(id); got != -1 {
 			t.Errorf("roadBuildCost(%s) = %d, want -1", RegionKind(id), got)
 		}
@@ -65,7 +66,7 @@ func TestRoadBuildCost_Overrides(t *testing.T) {
 	// Everything else matches the canonical table.
 	for _, id := range allRegionIDs {
 		switch id {
-		case RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery:
+		case RegionPlateau, RegionDragonDen, RegionDrakeNest, RegionWyvernRookery, RegionLava:
 			continue
 		}
 		if got, want := roadBuildCost(id), travelCostFor(id); got != want {

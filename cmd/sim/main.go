@@ -640,7 +640,11 @@ func (m *model) rebuildGrid() {
 				return world.Temperature(world.Latitude(int(y), world.DefaultLatTop, world.DefaultLatBottom), elev, climate)
 			})
 	case lensGeo:
-		m.gridBuf = render.BuildGeoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
+		m.gridBuf = render.BuildGeoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY,
+			func(x, y int64) (int64, int64) {
+				c := m.cellAt[[2]int64{x, y}]
+				return c.Rock, c.RockAge
+			})
 	case lensEco:
 		m.gridBuf = render.BuildEcoGridBuf(d.cells, d.rivers, d.roads, m.minX, m.minY, m.maxX, m.maxY)
 	case lensHydro:
@@ -676,6 +680,15 @@ func (m *model) cellInfoAt(x, y int64) render.CellInfo {
 	if c, ok := m.cellAt[[2]int64{x, y}]; ok {
 		info.Kind = c.Kind
 		info.Elev = c.Elevation
+		if rock := world.RockKind(c.Rock); rock != "" {
+			switch {
+			case c.RockAge <= 0:
+				rock += ", fresh"
+			case c.RockAge < 250:
+				rock += fmt.Sprintf(", laid %d ka ago", c.RockAge)
+			}
+			info.RockNote = rock
+		}
 	}
 	if rn, ok := m.riverAt[[2]int64{x, y}]; ok {
 		info.RiverName = rn
