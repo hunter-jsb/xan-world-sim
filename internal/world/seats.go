@@ -418,8 +418,23 @@ func lairPressureAt(l lairSite, x, y int64, activity float64) float64 {
 	return 0
 }
 
-// applyDragonPressure computes per-seat exposure to dragon-family
-// raids. Lore: "Northern kingdoms — those nestled up against the
+// reservedForFire marks every volcano site, born or not — ground no
+// lair dens on and no pass crosses. Unborn vents look like ordinary
+// peaks, but the fire below is already scheduled, and a den that a
+// later slice watches explode would orphan the feature tables.
+func (w *World) reservedForFire() map[[2]int64]bool {
+	if len(w.volcanoSites) == 0 {
+		return nil
+	}
+	r := make(map[[2]int64]bool, len(w.volcanoSites))
+	for _, s := range w.volcanoSites {
+		r[[2]int64{int64(s.x), int64(s.y)}] = true
+	}
+	return r
+}
+
+// applyDragonPressure computes per-seat exposure to the threat
+// family. Lore: "Northern kingdoms — those nestled up against the
 // Mountain Barrier — live under constant dragon pressure... Risk falls
 // off with distance from the mountains." Each seat takes the strongest
 // single threat over all lairs (a court plans against its worst
@@ -427,8 +442,11 @@ func lairPressureAt(l lairSite, x, y int64, activity float64) float64 {
 //
 //	pressure = max over lairs of (radius - chebyshev) × tier weight
 //
-// The year-by-year simulation (sim.go) recomputes the same formula
-// with per-lair activity, so at activity 1 the two are identical.
+// Recently-active volcanoes project through the same formula, their
+// heat fading over volcanoCoolKa — the geological member of the
+// family. The year-by-year simulation (sim.go) recomputes the same
+// formula with per-lair activity and per-vent heat, so at rest the
+// two are identical.
 func (w *World) applyDragonPressure() {
 	if len(w.Seats) == 0 {
 		return
@@ -438,6 +456,11 @@ func (w *World) applyDragonPressure() {
 		s := &w.Seats[i]
 		for _, l := range sites {
 			if p := lairPressureAt(l, s.X, s.Y, 1); p > s.Pressure {
+				s.Pressure = p
+			}
+		}
+		for _, v := range w.Volcanoes {
+			if p := lairPressureAt(volcanoPressureSite(v.X, v.Y), s.X, s.Y, volcanoHeatAt(v.LastAgo)); p > s.Pressure {
 				s.Pressure = p
 			}
 		}

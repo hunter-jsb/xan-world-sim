@@ -54,6 +54,86 @@ var rockNames = map[int64]string{
 // RockKind returns the display name for a lithology ("" if unknown).
 func RockKind(rock int64) string { return rockNames[rock] }
 
+// SoilFertility scores what the ground gives back to the plow, in
+// [0, 1] — the one function every civilization stage reads, so the
+// map's agronomy can't drift between systems. River silt and glacial
+// dust feed kingdoms; weathered volcanic soil is rich (the vineyard
+// slopes under the fire mountain); fresh lava feeds no one.
+func SoilFertility(rock, ageAgo int64) float64 {
+	switch rock {
+	case RockAlluvium:
+		return 1.0
+	case RockLoess:
+		return 0.9
+	case RockLava:
+		if ageAgo <= lavaFreshKa {
+			return 0
+		}
+		return 0.8
+	case RockTill:
+		return 0.55
+	case RockSediment:
+		return 0.5
+	case RockOrogen:
+		return 0.25
+	case RockBasement:
+		return 0.2
+	}
+	return 0
+}
+
+// fertilityGrid maps every cell to its soil fertility — the shared
+// lookup the polity stages and the slice simulation both read, so
+// the same ground feeds the same kingdoms everywhere.
+func (w *World) fertilityGrid() map[[2]int64]float64 {
+	m := make(map[[2]int64]float64, len(w.Regions))
+	for _, rc := range w.Regions {
+		m[[2]int64{rc.X, rc.Y}] = SoilFertility(rc.Rock, rc.RockAge)
+	}
+	return m
+}
+
+// fertAround averages fertility over a cell's 3×3 neighborhood — a
+// hall's granary, the land it actually farms.
+func fertAround(fert map[[2]int64]float64, x, y int64) float64 {
+	var sum float64
+	for dy := int64(-1); dy <= 1; dy++ {
+		for dx := int64(-1); dx <= 1; dx++ {
+			sum += fert[[2]int64{x + dx, y + dy}]
+		}
+	}
+	return sum / 9
+}
+
+// volcanoHeatAt is a vent's residual menace given how long ago it
+// last erupted: 1 at the moment of eruption, fading to 0 over
+// volcanoCoolKa. Scales the vent's pressure projection the way
+// activity scales a lair's.
+func volcanoHeatAt(lastAgo int64) float64 {
+	f := 1 - float64(lastAgo)/volcanoCoolKa
+	if f < 0 {
+		return 0
+	}
+	return f
+}
+
+// volcanoPressureSite adapts a vent to the lair pressure formula —
+// one threat family, one falloff.
+func volcanoPressureSite(x, y int64) lairSite {
+	return lairSite{X: x, Y: y, Kind: "volcano", Radius: volcanoRadius, Weight: 1}
+}
+
+// eruptionFrac places an eruption inside its kiloyear: the schedule
+// is integer-ka (deep time's resolution), but a slice lives at month
+// resolution, so each eruption gets a deterministic sub-ka moment —
+// true time (e.kya + frac) ka before present. Deep time's epochs are
+// unaffected (frac < 1 never crosses an epoch boundary); a slice at
+// kya K replays exactly the eruptions with e.kya == K−1, at year
+// (1 − frac) × 1000 of the slice. One timeline, two resolutions.
+func eruptionFrac(seed int64, s volcanoSite, kya int) float64 {
+	return geoHash01(seed, s.x, s.y, 1000000+kya)
+}
+
 // VolcanoInfo names a volcanic edifice on the rift shoulder. A vent
 // only appears on the map once it has erupted at least once by the
 // world's moment — scrub forward through deep time and new volcanoes
@@ -125,6 +205,18 @@ const (
 	// Fluvial: floodplains carrying real upstream flow are reworked
 	// continually — their surface reads as young alluvium.
 	alluviumMinAccum = 60 // upstream cells before a floodplain reads alluvial
+
+	// A volcano is the geological member of the threat family: a
+	// recently-active vent projects into the same pressure field the
+	// dragon lairs use (lairPressureAt), cooling off over volcanoCoolKa.
+	// Radius sits between a den's 12 and a rookery's 6 — the fire
+	// reaches farther than wyverns, less far than a dragon's wings.
+	volcanoRadius = 8
+	volcanoCoolKa = 50.0
+
+	// volcanoNameSalt keys a vent's name to its summit cell, same
+	// scheme as every other named place.
+	volcanoNameSalt = 7741
 )
 
 // geoHash01 mixes seed, cell, and epoch into a unit float — the
@@ -487,12 +579,35 @@ func diffuseEpoch(elev [][]float64, land [][]bool, zones [][]BedrockZone) {
 	}
 }
 
+// volcanoTimelineFor rebuilds the seed's volcanic timeline from the
+// structural frame alone — no erosion, no history — for anyone who
+// needs the schedule without paying for a full Generate. The frame
+// draws consume a fresh rng exactly as generateBedrock's opening
+// does, so the zones, and therefore the sites and schedule, are
+// identical by construction.
+func volcanoTimelineFor(seed int64) ([]volcanoSite, []eruption) {
+	rng := rand.New(rand.NewSource(seed))
+	mountainRow := genMountainRow(rng)
+	foothillThick := genFoothillThickness(rng)
+	coastX := genCoastX(rng)
+	zones := make([][]BedrockZone, Height)
+	for y := 0; y < Height; y++ {
+		zones[y] = make([]BedrockZone, Width)
+		for x := 0; x < Width; x++ {
+			zones[y][x] = bedrockZone(x, y, mountainRow, foothillThick, coastX)
+		}
+	}
+	return drawVolcanism(seed, zones)
+}
+
 // generateBedrock builds the structural frame from the main rng
 // (consumption identical to the pre-history model), then integrates
 // the geological history from geoStart down to the requested kya.
-// Returns the bedrock at that moment plus the volcano roster — only
-// vents that have already erupted by then exist on the map.
-func generateBedrock(rng *rand.Rand, seed int64, kya int) ([][]BedrockCell, []VolcanoInfo) {
+// Returns the bedrock at that moment, the volcano roster (only vents
+// that have already erupted by then exist on the map), and the full
+// site list + schedule — the one volcanic timeline that deep time
+// integrates and a slice replays live.
+func generateBedrock(rng *rand.Rand, seed int64, kya int) ([][]BedrockCell, []VolcanoInfo, []volcanoSite, []eruption) {
 	mountainRow := genMountainRow(rng)
 	foothillThick := genFoothillThickness(rng)
 	coastX := genCoastX(rng)
@@ -621,7 +736,7 @@ func generateBedrock(rng *rand.Rand, seed int64, kya int) ([][]BedrockCell, []Vo
 		}
 		vols = append(vols, VolcanoInfo{
 			ID:        int64(len(vols) + 1),
-			Name:      generateName(nameSeedForCell(seed, int64(s.x), int64(s.y)) + 7741),
+			Name:      generateName(nameSeedForCell(seed, int64(s.x), int64(s.y)) + volcanoNameSalt),
 			X:         int64(s.x),
 			Y:         int64(s.y),
 			Elevation: elev[s.y][s.x],
@@ -629,7 +744,7 @@ func generateBedrock(rng *rand.Rand, seed int64, kya int) ([][]BedrockCell, []Vo
 			Eruptions: int64(erupted),
 		})
 	}
-	return out, vols
+	return out, vols, sites, sched
 }
 
 func applyUplift(elev [][]float64, zones [][]BedrockZone) {

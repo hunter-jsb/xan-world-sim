@@ -24,17 +24,19 @@ import "math/rand"
 // combined output.
 func Generate(seed int64, kya int) World {
 	rng := rand.New(rand.NewSource(seed))
-	bedrock, volcanoes := generateBedrock(rng, seed, kya)
+	bedrock, volcanoes, vsites, vsched := generateBedrock(rng, seed, kya)
 
 	w := World{
-		Seed:      seed,
-		Kya:       kya,
-		Era:       EraForKya(kya),
-		LatTop:    DefaultLatTop,
-		LatBottom: DefaultLatBottom,
-		Orbital:   OrbitalAt(kya),
-		Climate:   ClimateAt(kya),
-		Volcanoes: volcanoes,
+		Seed:         seed,
+		Kya:          kya,
+		Era:          EraForKya(kya),
+		LatTop:       DefaultLatTop,
+		LatBottom:    DefaultLatBottom,
+		Orbital:      OrbitalAt(kya),
+		Climate:      ClimateAt(kya),
+		Volcanoes:    volcanoes,
+		volcanoSites: vsites,
+		volcanoSched: vsched,
 	}
 
 	w.classifyRegions(bedrock)

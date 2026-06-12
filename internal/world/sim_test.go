@@ -97,11 +97,11 @@ func TestSim_EventsFire(t *testing.T) {
 				epoch = &ev
 			}
 			switch e.Kind {
-			case "secede", "swear", "dissolve", "epoch", "ruin", "founding", "war", "capture", "peace":
+			case "secede", "swear", "dissolve", "epoch", "ruin", "founding", "war", "capture", "peace", "eruption":
 				if !e.Major {
 					t.Errorf("year %d: %s event not Major", e.Year, e.Kind)
 				}
-			case "stance", "lair", "raid":
+			case "stance", "lair", "raid", "tremor":
 				if e.Major {
 					t.Errorf("year %d: %s event marked Major", e.Year, e.Kind)
 				}
@@ -130,11 +130,11 @@ func TestSim_NoCrownAge(t *testing.T) {
 	}
 	for y := 0; y < 300; y++ {
 		for _, e := range s.StepYear() {
-			// Lairs stir, lords die, and halls may burn or rise under
-			// the ice too — but no crown politics: no stances, no
-			// oaths, no realms moving by choice.
+			// Lairs stir, lords die, the earth speaks, and halls may
+			// burn or rise under the ice too — but no crown politics:
+			// no stances, no oaths, no realms moving by choice.
 			switch e.Kind {
-			case "lair", "succession", "ruin", "founding", "dissolve":
+			case "lair", "succession", "ruin", "founding", "dissolve", "eruption", "tremor":
 			default:
 				t.Errorf("year %d: %s event in a crownless age: %s", e.Year, e.Kind, e.Text)
 			}
@@ -211,12 +211,16 @@ func TestSim_CauseWeb(t *testing.T) {
 				t.Errorf("war's grievance source is %q, want secede or capture", parent.Kind)
 			}
 		case "ruin", "secede", "swear":
-			if parent.Kind != "lair" && parent.Kind != "succession" {
-				t.Errorf("%s event's cause is %q, want lair or succession", e.Kind, parent.Kind)
+			if parent.Kind != "lair" && parent.Kind != "succession" && parent.Kind != "eruption" {
+				t.Errorf("%s event's cause is %q, want lair, succession, or eruption", e.Kind, parent.Kind)
 			}
 		case "founding":
 			if parent.Kind != "ruin" {
 				t.Errorf("founding's cause is %q, want the ruin it resettles", parent.Kind)
+			}
+		case "tremor":
+			if parent.Kind != "eruption" {
+				t.Errorf("tremor's cause is %q, want the eruption that left the vent restless", parent.Kind)
 			}
 		}
 	}

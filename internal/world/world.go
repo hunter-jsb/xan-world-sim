@@ -206,4 +206,12 @@ type World struct {
 	Volcanoes []VolcanoInfo   // born vents on the rift shoulder
 	Realms    []Realm         // polities: the Crown + independent enclaves
 	Territory []TerritoryCell // realm sphere-of-control per claimed land cell
+
+	// The seed's full volcanic timeline — every site (born or not)
+	// and the entire eruption schedule. Unexported working state, not
+	// hashed or persisted: feature placement reads it to keep lairs
+	// and passes off ground that will one day split open, and the
+	// slice simulation replays its own millennium of it live.
+	volcanoSites []volcanoSite
+	volcanoSched []eruption
 }

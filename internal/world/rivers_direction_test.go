@@ -19,7 +19,7 @@ func TestRiversFlowDownhill(t *testing.T) {
 
 	for _, seed := range []int64{0, 42, 7, 1234567890} {
 		rng := rand.New(rand.NewSource(seed))
-		bedrock, _ := generateBedrock(rng, seed, KyaNow)
+		bedrock, _, _, _ := generateBedrock(rng, seed, KyaNow)
 		elev := make([][]float64, Height)
 		for y := 0; y < Height; y++ {
 			elev[y] = make([]float64, Width)

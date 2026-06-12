@@ -89,17 +89,30 @@ func (m *model) buildExpEvents(fromRealm int64, path []render.PathCell, arrive [
 			if !inDanger {
 				inDanger = true
 				mauled := 2 + d/6
+				title := "wings on the horizon"
+				body := []string{
+					dimStyle.Render(fmt.Sprintf("the road ahead runs under a lair's shadow (danger %d)", d)),
+					dimStyle.Render("the drovers look to the sky, then to you"),
+				}
+				riskText := fmt.Sprintf("the beast finds the caravan — %d days lost tending the mauled", mauled)
+				safeText := "the shadow passes over; the road goes on"
+				if m.dangerSrc[p] == "volcano" {
+					title = "the burning mountain looms"
+					body = []string{
+						dimStyle.Render(fmt.Sprintf("the road ahead crosses ground the fire mountain claims (danger %d)", d)),
+						dimStyle.Render("ash on the wind; the drovers eye the smoking peak"),
+					}
+					riskText = fmt.Sprintf("a fissure vents across the trail — %d days lost picking through razor rock", mauled)
+					safeText = "the mountain only grumbles; the road goes on"
+				}
 				events = append(events, expEvent{
 					day: arrive[i], x: p[0], y: p[1],
-					title: "wings on the horizon",
-					body: []string{
-						dimStyle.Render(fmt.Sprintf("the road ahead runs under a lair's shadow (danger %d)", d)),
-						dimStyle.Render("the drovers look to the sky, then to you"),
-					},
+					title: title,
+					body:  body,
 					choices: []expChoice{
 						{label: "Press on", riskOdds: 0.5, riskDelay: mauled,
-							riskText: fmt.Sprintf("the beast finds the caravan — %d days lost tending the mauled", mauled),
-							safeText: "the shadow passes over; the road goes on"},
+							riskText: riskText,
+							safeText: safeText},
 						{label: "Shelter until it passes (+3 days)", delay: 3,
 							safeText: "three days in a cold camp, but every soul accounted for"},
 						{label: "Turn back", turnBack: true},

@@ -243,10 +243,26 @@ type Sim struct {
 	riverAt    map[[2]int64]bool
 
 	// Per-lair state, indexed like lairs (all three tiers flattened).
+	// deadLairs lists lairs destroyed during the slice (buried by
+	// lava) so activity lookups read 0, not the at-rest default.
 	lairs     []lairSite
 	activity  []float64 // raid-activity multiplier in [0, activityMax]
 	lairState []int     // 0 normal, 1 rampant, -1 dormant
 	lairNoted []bool    // some seat lies in raid range — tempers make the chronicle
+	deadLairs [][2]int64
+
+	// The slice's volcanic state (sim_volcano.go): every vent of the
+	// seed's timeline as a pressure site, its heat (the lair-activity
+	// analog), and the eruption queue for this millennium. fertAt is
+	// the soil-fertility grid — geology feeding the granaries that
+	// feed realm strength and founding sites.
+	volcanoes       []lairSite
+	volcanoHeat     []float64
+	volcanoName     []string
+	volcanoBorn     []bool
+	volcanoEventIdx []int
+	eruptions       []simEruption
+	fertAt          map[[2]int64]float64
 
 	// Wars: active conflicts, the standing grievances between realm
 	// pairs (keyed by sorted ID pair), and the current border-contact
@@ -335,6 +351,11 @@ func (s *Sim) LairActivity(x, y int64) float64 {
 	for i, l := range s.lairs {
 		if l.X == x && l.Y == y {
 			return s.activity[i]
+		}
+	}
+	for _, d := range s.deadLairs {
+		if d[0] == x && d[1] == y {
+			return 0 // buried by the mountain — its danger died with it
 		}
 	}
 	return 1
@@ -473,6 +494,9 @@ func NewSim(seed int64, kya int) *Sim {
 		s.lairEventIdx[i] = -1
 	}
 	s.recomputeLairNoted()
+
+	s.initVolcanoes(seed, kya)
+	s.fertAt = w.fertilityGrid()
 	return s
 }
 
@@ -500,9 +524,9 @@ func (s *Sim) Month() int { return s.Months%monthsPerYear + 1 }
 
 // StepMonth advances the slice one month and returns the month's
 // events (a view into the chronicle). Order is fixed for
-// determinism: dragons stir, pressure lands, courts drift, stances
-// settle, bonds break, halls fall and rise, wars run, borders
-// re-settle.
+// determinism: the earth speaks first, dragons stir, pressure lands,
+// courts drift, stances settle, bonds break, halls fall and rise,
+// wars run, borders re-settle.
 func (s *Sim) StepMonth() []SimEvent {
 	s.Months++
 	s.Year = s.Months / monthsPerYear
@@ -515,10 +539,11 @@ func (s *Sim) StepMonth() []SimEvent {
 		return len(s.Log) - 1
 	}
 
+	erupted := s.stepVolcanoes(emit)
 	s.stepLairs(emit)
 	s.stepAllegiance(emit)
 	s.stepSuccessions(emit)
-	changed := s.stepMembership(emit)
+	changed := s.stepMembership(emit) || erupted
 	if s.stepRuins(emit) {
 		changed = true
 	}
@@ -643,14 +668,20 @@ func (s *Sim) stepLairs(emit emitFn) {
 }
 
 // recomputePressure rescores every seat against the current lair
-// activities. With all activities at 1 this reproduces the
-// generator's applyDragonPressure exactly (pinned by test).
+// activities and vent heats. With activities at 1 and heats at their
+// generation values this reproduces the generator's
+// applyDragonPressure exactly (pinned by test).
 func (s *Sim) recomputePressure() {
 	for i := range s.W.Seats {
 		st := &s.W.Seats[i]
 		var p float64
 		for j, l := range s.lairs {
 			if c := lairPressureAt(l, st.X, st.Y, s.activity[j]); c > p {
+				p = c
+			}
+		}
+		for j, v := range s.volcanoes {
+			if c := lairPressureAt(v, st.X, st.Y, s.volcanoHeat[j]); c > p {
 				p = c
 			}
 		}
@@ -793,10 +824,21 @@ func (s *Sim) unrestCause(i int) int {
 		}
 		// A lair that is rampant *now* owns the unrest no matter how
 		// long ago it stirred — dragons besiege for decades. A calmer
-		// lair only counts while its news is recent.
-		if best >= 0 && s.lairEventIdx[best] >= 0 &&
+		// lair only counts while its news is recent. The bestP gate
+		// matters now that a vent can be the seat's worst neighbor: a
+		// weak lair never takes the blame for the mountain's fire.
+		if best >= 0 && bestP >= 4 && s.lairEventIdx[best] >= 0 &&
 			(s.lairState[best] == 1 || s.Year-s.Log[s.lairEventIdx[best]].Year <= 40) {
 			return s.lairEventIdx[best]
+		}
+		// The ash years: a vent that erupted within living memory and
+		// still presses on this hall owns its unrest.
+		for j, v := range s.volcanoes {
+			if idx := s.volcanoEventIdx[j]; idx >= 0 &&
+				s.Year-s.Log[idx].Year <= eruptionUnrestYears &&
+				lairPressureAt(v, st.X, st.Y, s.volcanoHeat[j]) >= 4 {
+				return idx
+			}
 		}
 	}
 	if idx := s.seatCrisisIdx[i]; idx >= 0 && s.Year-s.Log[idx].Year <= 25 {
@@ -1013,11 +1055,17 @@ func (s *Sim) stepFoundings(emit emitFn) bool {
 	return founded
 }
 
-// sitePressure is the static raid exposure of a cell (activity-scaled).
+// sitePressure is the static raid exposure of a cell (activity- and
+// heat-scaled): the worst of every lair and every vent.
 func (s *Sim) sitePressure(x, y int64) float64 {
 	var p float64
 	for j, l := range s.lairs {
 		if c := lairPressureAt(l, x, y, s.activity[j]); c > p {
+			p = c
+		}
+	}
+	for j, v := range s.volcanoes {
+		if c := lairPressureAt(v, x, y, s.volcanoHeat[j]); c > p {
 			p = c
 		}
 	}
@@ -1076,7 +1124,7 @@ func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit emitFn) bo
 		return true
 	}
 
-	bestScore := -1
+	bestScore := -1.0
 	var bx, by int64
 	bestRiver := false
 	for _, rc := range s.W.Regions {
@@ -1092,7 +1140,7 @@ func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit emitFn) bo
 		if s.sitePressure(rc.X, rc.Y) > foundCalmPressure {
 			continue
 		}
-		score := 0
+		score := 0.0
 		river := nearRiver(rc.X, rc.Y)
 		if river {
 			score += 2
@@ -1100,6 +1148,8 @@ func (s *Sim) foundSeat(realmID int64, owner map[[2]int64]int64, emit emitFn) bo
 		if rc.RegionID == RegionCradle || rc.RegionID == RegionAgraria {
 			score++
 		}
+		// Settlers read the ground: the richest soil in reach wins.
+		score += fertAround(s.fertAt, rc.X, rc.Y)
 		if score > bestScore {
 			bestScore, bx, by, bestRiver = score, rc.X, rc.Y, river
 		}
@@ -1185,7 +1235,9 @@ func (s *Sim) realmStrength(id int64) float64 {
 		if s.W.Seats[i].RealmID != id {
 			continue
 		}
-		str++
+		// Grain feeds armies: a hall's worth scales with its granary
+		// — the soil fertility of the land it actually farms.
+		str += 1 + fertStrengthK*fertAround(s.fertAt, s.W.Seats[i].X, s.W.Seats[i].Y)
 		if s.W.Seats[i].Tier == RegionMarch {
 			str += 0.5
 		}

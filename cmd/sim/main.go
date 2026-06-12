@@ -116,6 +116,7 @@ type model struct {
 	exp       *expedition
 	expGen    int
 	dangerMap map[[2]int64]int
+	dangerSrc map[[2]int64]string // dominant threat kind per dangerous cell
 
 	// Simulation mode (simmode.go): the current kya pinned as a slice
 	// of deep time, with the political layer running year by year.
@@ -619,11 +620,12 @@ func (m *model) buildLookups() {
 	for _, t := range m.data.territory {
 		m.territoryAt[[2]int64{t.X, t.Y}] = t
 	}
-	var activityAt func(x, y int64) float64
+	var activityAt, heatAt func(x, y int64) float64
 	if m.simMode && m.sim != nil {
 		activityAt = m.sim.LairActivity
+		heatAt = m.sim.VolcanoHeat
 	}
-	m.dangerMap = buildDangerMap(m.data.features, activityAt)
+	m.dangerMap, m.dangerSrc = buildDangerMap(m.data.features, activityAt, heatAt)
 	m.pois = buildPOIs(m.data)
 }
 
@@ -1273,8 +1275,14 @@ func (m *model) overlayPath() []render.PathCell {
 // activityAt scales each lair's danger by its current raid activity
 // (sim mode: routes get costlier under a rampant dragon and cheaper
 // past a dormant one); nil means the static generation-time level.
-func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow, activityAt func(x, y int64) float64) map[[2]int64]int {
+// Volcanoes radiate through the same map (radius 8 ×3, scaled by
+// heat — live in a slice via heatAt, else from the persisted
+// last-eruption age): one danger field, every source. The returned
+// source map names the dominant threat per cell so the expedition
+// events can flavor the encounter honestly.
+func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow, activityAt, heatAt func(x, y int64) float64) (map[[2]int64]int, map[[2]int64]string) {
 	danger := make(map[[2]int64]int)
+	source := make(map[[2]int64]string)
 	for _, f := range features {
 		var radius, scale int
 		switch f.Kind {
@@ -1284,11 +1292,23 @@ func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow, activityAt func(x
 			radius, scale = 8, 2
 		case "rookery":
 			radius, scale = 6, 1
+		case "volcano":
+			radius, scale = 8, 3
 		default:
 			continue
 		}
 		activity := 1.0
-		if activityAt != nil {
+		if f.Kind == "volcano" {
+			if heatAt != nil {
+				activity = heatAt(f.X, f.Y)
+			} else {
+				// Static heat from the persisted last-eruption age.
+				activity = 1 - float64(f.Meta)/50
+				if activity < 0 {
+					activity = 0
+				}
+			}
+		} else if activityAt != nil {
 			activity = activityAt(f.X, f.Y)
 		}
 		for dy := -radius; dy <= radius; dy++ {
@@ -1311,11 +1331,12 @@ func buildDangerMap(features []db.GetNamedFeaturesInBoundsRow, activityAt func(x
 				k := [2]int64{f.X + int64(dx), f.Y + int64(dy)}
 				if d > danger[k] {
 					danger[k] = d
+					source[k] = f.Kind
 				}
 			}
 		}
 	}
-	return danger
+	return danger, source
 }
 
 // pathCellCost returns the movement cost to enter (x, y), or -1 if impassable.

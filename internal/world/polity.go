@@ -157,7 +157,9 @@ func (w *World) logisticCostFrom(sources [][2]int) [][]int {
 // the mountains... where the populous capitals are most likely to
 // sit" — on the main river. Geographic signature: the Tributary
 // adjacent to the highest-drainage river (the cradle's "Mississippi"),
-// furthest downstream along it (max Ord), least dragon pressure.
+// on the richest ground (a capital is first of all a granary —
+// SoilFertility over its 3×3 neighborhood), furthest downstream
+// along it (max Ord), least dragon pressure.
 // Returns the capital's index in w.Seats, or -1 when no Tributary
 // exists (e.g., at the LGM there are no rivers and therefore no crown).
 func (w *World) chooseCapital() int {
@@ -165,6 +167,7 @@ func (w *World) chooseCapital() int {
 	for _, ri := range w.RiverInfo {
 		drainageOf[ri.ID] = ri.Drainage
 	}
+	fertOf := w.fertilityGrid()
 	type rcell struct {
 		id  int64
 		ord int64
@@ -176,12 +179,13 @@ func (w *World) chooseCapital() int {
 
 	best := -1
 	var bestDrain, bestOrd int64
-	var bestPressure float64
+	var bestPressure, bestFert float64
 	for i := range w.Seats {
 		s := &w.Seats[i]
 		if s.Tier != RegionSeat {
 			continue
 		}
+		fert := fertAround(fertOf, s.X, s.Y)
 		// The seat sits on its (filtered-out) river cell; the chain's
 		// neighbors are still in w.Rivers. Take the strongest river
 		// touching the seat and the furthest-downstream ord of it.
@@ -203,13 +207,15 @@ func (w *World) chooseCapital() int {
 			better = true
 		case drain != bestDrain:
 			better = drain > bestDrain
+		case fert != bestFert:
+			better = fert > bestFert
 		case ord != bestOrd:
 			better = ord > bestOrd
 		case s.Pressure != bestPressure:
 			better = s.Pressure < bestPressure
 		}
 		if better {
-			best, bestDrain, bestOrd, bestPressure = i, drain, ord, s.Pressure
+			best, bestDrain, bestOrd, bestPressure, bestFert = i, drain, ord, s.Pressure, fert
 		}
 	}
 	if best < 0 {

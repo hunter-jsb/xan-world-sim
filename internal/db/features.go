@@ -8,37 +8,42 @@ type GetNamedFeaturesInBoundsRow struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 	// Detail is an optional human-readable annotation for the info
-	// panel — currently only lakes carry one (bathymetry).
+	// panel (lake bathymetry, a volcano's last eruption). Meta is an
+	// optional numeric annotation — 0 except for volcanoes, which
+	// carry last_eruption_ago so the danger map can scale their heat.
 	Detail string `json:"detail"`
+	Meta   int64  `json:"meta"`
 }
 
 // getNamedFeaturesInBounds unions dens, drake nests, wyvern rookeries,
 // lakes, passes, and volcanoes — any named feature that has a procgen
 // name stored separately from the region_cells kind field.
 const getNamedFeaturesInBounds = `
-SELECT x, y, 'den'     AS kind, name, '' AS detail FROM dens
+SELECT x, y, 'den'     AS kind, name, '' AS detail, 0 AS meta FROM dens
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'nest'    AS kind, name, '' AS detail FROM drake_nests
+SELECT x, y, 'nest'    AS kind, name, '' AS detail, 0 AS meta FROM drake_nests
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'rookery' AS kind, name, '' AS detail FROM wyvern_rookeries
+SELECT x, y, 'rookery' AS kind, name, '' AS detail, 0 AS meta FROM wyvern_rookeries
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
 SELECT x, y, 'lake'    AS kind, name,
        printf('surface %dm, depth %dm',
               CAST(round(surface_elev) AS INTEGER),
-              CAST(round(max_depth) AS INTEGER)) AS detail
+              CAST(round(max_depth) AS INTEGER)) AS detail,
+       0 AS meta
   FROM lakes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
-SELECT x, y, 'pass'    AS kind, name, '' AS detail FROM passes
+SELECT x, y, 'pass'    AS kind, name, '' AS detail, 0 AS meta FROM passes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 UNION ALL
 SELECT x, y, 'volcano' AS kind, name,
        CASE WHEN last_eruption_ago = 0 THEN 'erupting now'
             ELSE printf('last erupted %d ka ago', last_eruption_ago)
-       END AS detail
+       END AS detail,
+       last_eruption_ago AS meta
   FROM volcanoes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 `
@@ -59,7 +64,7 @@ func (q *Queries) GetNamedFeaturesInBounds(ctx context.Context, minX, maxX, minY
 	var out []GetNamedFeaturesInBoundsRow
 	for rows.Next() {
 		var r GetNamedFeaturesInBoundsRow
-		if err := rows.Scan(&r.X, &r.Y, &r.Kind, &r.Name, &r.Detail); err != nil {
+		if err := rows.Scan(&r.X, &r.Y, &r.Kind, &r.Name, &r.Detail, &r.Meta); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

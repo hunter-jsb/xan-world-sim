@@ -14,12 +14,13 @@ type peakCell struct {
 // RegionID as featureZone, and returns the picks sorted by elevation
 // desc. E/S tiebreaker on equal-elevation neighbors: a cell wins ties
 // against its E/S neighbors, loses to N/W — guarantees a unique winner
-// per flat plateau.
-func findAndMarkPeaks(regions []RegionCell, targetZone, featureZone int64, window, minSepSq int) []peakCell {
+// per flat plateau. Cells in reserved are never picked (ground that
+// will one day split open — the beasts know better than to den there).
+func findAndMarkPeaks(regions []RegionCell, targetZone, featureZone int64, window, minSepSq int, reserved map[[2]int64]bool) []peakCell {
 	g := gridOf(regions)
 	var cands []peakCell
 	for _, rc := range regions {
-		if rc.RegionID != targetZone {
+		if rc.RegionID != targetZone || reserved[[2]int64{rc.X, rc.Y}] {
 			continue
 		}
 		cx, cy := int(rc.X), int(rc.Y)
@@ -94,7 +95,8 @@ func findAndMarkPeaks(regions []RegionCell, targetZone, featureZone int64, windo
 //	                   "nest like raptors — often colonial," so they
 //	                   crowd more tightly than drakes or dragons.
 func (w *World) placeLairs() {
-	for i, p := range findAndMarkPeaks(w.Regions, RegionMountain, RegionDragonDen, 2, 6*6) {
+	reserved := w.reservedForFire()
+	for i, p := range findAndMarkPeaks(w.Regions, RegionMountain, RegionDragonDen, 2, 6*6, reserved) {
 		w.Dens = append(w.Dens, DenInfo{
 			ID:        int64(i + 1),
 			Name:      generateName(nameSeedForCell(w.Seed, int64(p.x), int64(p.y))),
@@ -103,7 +105,7 @@ func (w *World) placeLairs() {
 			Elevation: p.elev,
 		})
 	}
-	for i, p := range findAndMarkPeaks(w.Regions, RegionFoothill, RegionDrakeNest, 2, 4*4) {
+	for i, p := range findAndMarkPeaks(w.Regions, RegionFoothill, RegionDrakeNest, 2, 4*4, reserved) {
 		w.Nests = append(w.Nests, NestInfo{
 			ID:        int64(i + 1),
 			Name:      generateName(nameSeedForCell(w.Seed, int64(p.x), int64(p.y))),
@@ -112,7 +114,7 @@ func (w *World) placeLairs() {
 			Elevation: p.elev,
 		})
 	}
-	for i, p := range findAndMarkPeaks(w.Regions, RegionCliff, RegionWyvernRookery, 1, 3*3) {
+	for i, p := range findAndMarkPeaks(w.Regions, RegionCliff, RegionWyvernRookery, 1, 3*3, reserved) {
 		w.Rookeries = append(w.Rookeries, RookeryInfo{
 			ID:        int64(i + 1),
 			Name:      generateName(nameSeedForCell(w.Seed, int64(p.x), int64(p.y))),
@@ -142,6 +144,7 @@ func (w *World) placeLairs() {
 // doesn't yield clusters of passes.
 func (w *World) findPasses() {
 	g := gridOf(w.Regions)
+	reserved := w.reservedForFire()
 	isApproachKind := func(id int64) bool {
 		return id == RegionFoothill || id == RegionCradle ||
 			id == RegionForest || id == RegionTundra ||
@@ -151,7 +154,7 @@ func (w *World) findPasses() {
 	var picks [][2]int
 	for i := range w.Regions {
 		rc := &w.Regions[i]
-		if rc.RegionID != RegionMountain {
+		if rc.RegionID != RegionMountain || reserved[[2]int64{rc.X, rc.Y}] {
 			continue
 		}
 		cx, cy := int(rc.X), int(rc.Y)
