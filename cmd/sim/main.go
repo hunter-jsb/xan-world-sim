@@ -106,6 +106,11 @@ type model struct {
 	era     world.Era
 	status  string
 
+	// chain is the seed's sealed ages (fate.go) — folded into every
+	// regen and every slice, persisted per seed, grown by sealing a
+	// finished slice into the next step of deep time.
+	chain []world.Fate
+
 	// Cursor position on the map.
 	curX, curY int64
 
@@ -203,6 +208,7 @@ const (
 	popConclude    popupAction = "conclude-expedition"
 	popJumpPOI     popupAction = "jump-poi"     // arg = index into m.pois
 	popExitSim     popupAction = "exit-sim"     // leave simulation mode
+	popSealAge     popupAction = "seal-age"     // distill the slice's fate, step deep time forward
 	popJumpXY      popupAction = "jump-xy"      // jump cursor to the popup's cell
 	popEventDetail popupAction = "event-detail" // arg = index into m.sim.Log — opens the event's page
 	popChronicle   popupAction = "chronicle"    // back to the chronicle list
@@ -363,6 +369,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			newSeed := time.Now().UnixNano()
 			m.seed = newSeed
+			// Every seed keeps its own sealed ages; a fresh roll almost
+			// always starts with none.
+			if chain, err := world.LoadFateChain(m.ctx, m.conn, newSeed); err == nil {
+				m.chain = chain
+			} else {
+				m.chain = nil
+			}
 			m.status = "rerolling..."
 			return m, m.regen(newSeed, m.kya)
 		case "e":
@@ -727,8 +740,8 @@ func (m model) regen(seed int64, kya int) tea.Cmd {
 		}()
 		m.regenMu.Lock()
 		defer m.regenMu.Unlock()
-		simLog("regen seed=%d kya=%d", seed, kya)
-		w := world.Generate(seed, kya)
+		simLog("regen seed=%d kya=%d fates=%d", seed, kya, len(m.chain))
+		w := world.GenerateWithFates(seed, kya, m.chain)
 		if err := world.Persist(m.ctx, m.conn, w); err != nil {
 			simLog("persist failed seed=%d kya=%d: %v", seed, kya, err)
 			return regenMsg{err: fmt.Errorf("persist: %w", err)}
@@ -769,6 +782,9 @@ func (m model) View() string {
 	}
 	gI := world.GlacialIndex(m.kya)
 	title += dimStyle.Render("   glacial: ") + seedStyle.Render(fmt.Sprintf("%.2f", gI))
+	if n := len(m.chain); n > 0 {
+		title += dimStyle.Render("   ages sealed: ") + seedStyle.Render(fmt.Sprintf("%d", n))
+	}
 	if m.lens != lensTerrain {
 		title += dimStyle.Render("   [") + statusStyle.Render(lensNames[m.lens]) + dimStyle.Render("]")
 	}
@@ -871,7 +887,11 @@ func main() {
 
 	seed := readMetaInt(ctx, conn, "seed")
 	kya := int(readMetaInt(ctx, conn, "kya"))
-	if err := world.Persist(ctx, conn, world.Generate(seed, kya)); err != nil {
+	chain, err := world.LoadFateChain(ctx, conn, seed)
+	if err != nil {
+		log.Fatalf("load fate chain: %v", err)
+	}
+	if err := world.Persist(ctx, conn, world.GenerateWithFates(seed, kya, chain)); err != nil {
 		log.Fatalf("bootstrap world: %v", err)
 	}
 
@@ -903,6 +923,7 @@ func main() {
 		data:    data,
 		legend:  render.Legend(),
 		seed:    seed,
+		chain:   chain,
 		kya:     kya,
 		era:     era,
 		curX:    initCurX,
@@ -987,6 +1008,31 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 		m.exitSim()
 		m.mapStr = m.buildMap()
 		return m, m.showToast("returned to deep time")
+
+	case popSealAge:
+		if m.sim == nil || !m.sim.EpochReached() || m.kya <= 0 {
+			break
+		}
+		fate := world.DistillFate(m.sim)
+		if err := world.SaveFate(m.ctx, m.conn, fate); err != nil {
+			m.status = fmt.Sprintf("the age would not seal: %v", err)
+			break
+		}
+		// Branch semantics in memory, mirroring SaveFate: this future
+		// replaces any previously sealed at or after this moment.
+		kept := m.chain[:0:0]
+		for _, f := range m.chain {
+			if f.Kya > fate.Kya {
+				kept = append(kept, f)
+			}
+		}
+		m.chain = append(kept, fate)
+		m.exitSim()
+		m.kya--
+		m.era = world.EraForKya(m.kya)
+		m.mapStr = m.buildMap()
+		return m, tea.Batch(m.regen(m.seed, m.kya),
+			m.showToast(fmt.Sprintf("the age is sealed — deep time steps to %dkya carrying its fate", m.kya)))
 
 	case popJumpXY:
 		m.curX, m.curY = pop.cellX, pop.cellY

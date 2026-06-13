@@ -226,6 +226,8 @@ func (s *Sim) buryHallAt(x, y int64, volcano string, cause int, emit emitFn) boo
 			Text: fmt.Sprintf("the flows of %s entomb %s — the hall of House %s is gone beneath the stone",
 				volcano, st.Name, s.house[i]),
 			Detail: detail})
+		s.fallen = append(s.fallen, FateRuin{X: x, Y: y, Name: st.Name, House: s.house[i],
+			Year: s.Year, Story: s.Log[idx].Text})
 		s.removeSeat(i)
 		if realmID != 0 {
 			s.maybeDissolve(realmID, emit, idx)

@@ -23,6 +23,17 @@ import "math/rand"
 // every stage must be deterministic — the snapshot tests pin the
 // combined output.
 func Generate(seed int64, kya int) World {
+	return GenerateWithFates(seed, kya, nil)
+}
+
+// GenerateWithFates is Generate carrying the fate chain — the sealed
+// records of the ages already simulated (fate.go). With a nil chain
+// it is byte-identical to the pure equilibrium world the snapshot
+// tests pin; with fates it folds the remembered ages in after the
+// equilibrium seats stand and before lairs, roads, and the polity —
+// so the old halls get roads, pressure, allegiance, and realms like
+// anything else, and the tells of fallen houses scar the map.
+func GenerateWithFates(seed int64, kya int, fates []Fate) World {
 	rng := rand.New(rand.NewSource(seed))
 	bedrock, volcanoes, vsites, vsched := generateBedrock(rng, seed, kya)
 
@@ -62,6 +73,7 @@ func Generate(seed int64, kya int) World {
 	w.placeSeats()
 	w.placeReaches()
 	w.placeOutholds()
+	w.foldFates(fates)
 	w.placeLairs()
 	w.applyDragonPressure()
 

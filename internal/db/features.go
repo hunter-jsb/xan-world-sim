@@ -16,8 +16,8 @@ type GetNamedFeaturesInBoundsRow struct {
 }
 
 // getNamedFeaturesInBounds unions dens, drake nests, wyvern rookeries,
-// lakes, passes, and volcanoes — any named feature that has a procgen
-// name stored separately from the region_cells kind field.
+// lakes, passes, volcanoes, and tells — any named feature that has a
+// procgen name stored separately from the region_cells kind field.
 const getNamedFeaturesInBounds = `
 SELECT x, y, 'den'     AS kind, name, '' AS detail, 0 AS meta FROM dens
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
@@ -46,10 +46,14 @@ SELECT x, y, 'volcano' AS kind, name,
        last_eruption_ago AS meta
   FROM volcanoes
   WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
+UNION ALL
+SELECT x, y, 'ruin' AS kind, name, story AS detail, 0 AS meta FROM tells
+  WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?
 `
 
 func (q *Queries) GetNamedFeaturesInBounds(ctx context.Context, minX, maxX, minY, maxY int64) ([]GetNamedFeaturesInBoundsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getNamedFeaturesInBounds,
+		minX, maxX, minY, maxY,
 		minX, maxX, minY, maxY,
 		minX, maxX, minY, maxY,
 		minX, maxX, minY, maxY,

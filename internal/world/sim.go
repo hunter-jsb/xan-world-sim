@@ -232,12 +232,16 @@ type Sim struct {
 
 	// Rise and fall: ruinStreak counts consecutive years under
 	// ruinPressure (indexed like W.Seats); ruins are the halls lost
-	// this slice; patches are map-cell kind changes for the TUI to
-	// splice into its render data; capDist is the capital's logistic
-	// field, kept so founded seats can score their allegiance base;
-	// riverAt marks river cells for founding-site tier choice.
+	// this slice that can still be resettled; fallen is the complete
+	// record of every loss — burials included — kept for the age's
+	// fate (fate.go); patches are map-cell kind changes for the TUI
+	// to splice into its render data; capDist is the capital's
+	// logistic field, kept so founded seats can score their
+	// allegiance base; riverAt marks river cells for founding-site
+	// tier choice.
 	ruinStreak []int
 	ruins      []RuinSite
+	fallen     []FateRuin
 	patches    []CellPatch
 	capDist    [][]int
 	riverAt    map[[2]int64]bool
@@ -404,9 +408,14 @@ func (s *Sim) CellPatches() []CellPatch { return s.patches }
 
 // NewSim generates the slice's world and prepares it for stepping.
 // The world is generated fresh (never loaded) so the sim's geography
-// is exactly the deterministic snapshot for (seed, kya).
+// is exactly the deterministic snapshot for (seed, kya). Slices that
+// should remember sealed ages go through NewSimWithFates (fate.go).
 func NewSim(seed int64, kya int) *Sim {
-	w := Generate(seed, kya)
+	return newSimOn(Generate(seed, kya), seed, kya)
+}
+
+// newSimOn prepares a sim over an already-generated world.
+func newSimOn(w World, seed int64, kya int) *Sim {
 	s := &Sim{
 		W: &w,
 		// The sim's own RNG is independent of worldgen's: mixing kya in
@@ -1010,6 +1019,8 @@ func (s *Sim) stepRuins(emit emitFn) bool {
 			Text:   fmt.Sprintf("dragonfire takes %s — the hall of House %s lies in ruins", st.Name, s.house[i]),
 			Detail: detail})
 		s.ruins = append(s.ruins, RuinSite{X: st.X, Y: st.Y, Name: st.Name, Year: s.Year, EventIdx: idx})
+		s.fallen = append(s.fallen, FateRuin{X: st.X, Y: st.Y, Name: st.Name, House: s.house[i],
+			Year: s.Year, Story: s.Log[idx].Text})
 		s.setRegion(st.X, st.Y, RegionRuin)
 		if st.RealmID != 0 {
 			dissolveCause[st.RealmID] = idx

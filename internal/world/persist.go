@@ -3,6 +3,7 @@ package world
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -22,7 +23,7 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	for _, table := range []string{
 		"river_cells", "rivers", "region_cells", "seats", "lakes",
 		"passes", "road_cells", "roads", "dens", "drake_nests",
-		"wyvern_rookeries", "volcanoes", "territory", "realms",
+		"wyvern_rookeries", "volcanoes", "tells", "territory", "realms",
 	} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
@@ -121,6 +122,12 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	); err != nil {
 		return err
 	}
+	if err := insertAll(ctx, tx, "tell",
+		"INSERT INTO tells (id, name, x, y, story, era_kya) VALUES (?, ?, ?, ?, ?, ?)",
+		w.Tells, func(tl TellInfo) []any { return []any{tl.ID, tl.Name, tl.X, tl.Y, tl.Story, tl.EraKya} },
+	); err != nil {
+		return err
+	}
 
 	era := string(w.Era)
 	if era == "" {
@@ -148,6 +155,54 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 	}
 
 	return tx.Commit()
+}
+
+// SaveFate seals one age into the chain. Branch semantics: sealing at
+// kya K is choosing this future, so any previously sealed ages at or
+// after that moment (kya <= K) are dropped first.
+func SaveFate(ctx context.Context, conn *sql.DB, f Fate) error {
+	record, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("marshal fate: %w", err)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM fates WHERE seed = ? AND kya <= ?", f.Seed, f.Kya); err != nil {
+		return fmt.Errorf("clear abandoned future: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO fates (seed, kya, record) VALUES (?, ?, ?)", f.Seed, f.Kya, string(record)); err != nil {
+		return fmt.Errorf("insert fate: %w", err)
+	}
+	return tx.Commit()
+}
+
+// LoadFateChain returns the seed's sealed ages, oldest (highest kya)
+// first. An empty chain is a world with no recorded history yet.
+func LoadFateChain(ctx context.Context, conn *sql.DB, seed int64) ([]Fate, error) {
+	rows, err := conn.QueryContext(ctx,
+		"SELECT record FROM fates WHERE seed = ? ORDER BY kya DESC", seed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chain []Fate
+	for rows.Next() {
+		var record string
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		var f Fate
+		if err := json.Unmarshal([]byte(record), &f); err != nil {
+			return nil, fmt.Errorf("unmarshal fate: %w", err)
+		}
+		chain = append(chain, f)
+	}
+	return chain, rows.Err()
 }
 
 // insertAll prepares query once and executes it for every row, mapping

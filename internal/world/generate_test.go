@@ -196,6 +196,13 @@ func hashWorld(w World) string {
 		fmt.Fprintf(&b, "VO(%d,%d,%d,%.1f,%s,%d,%d)|", v.ID, v.X, v.Y, v.Elevation, v.Name, v.LastAgo, v.Eruptions)
 	}
 
+	tells := make([]TellInfo, len(w.Tells))
+	copy(tells, w.Tells)
+	sort.Slice(tells, func(i, j int) bool { return tells[i].ID < tells[j].ID })
+	for _, tl := range tells {
+		fmt.Fprintf(&b, "TL(%d,%d,%d,%s,%d,%s)|", tl.ID, tl.X, tl.Y, tl.Name, tl.EraKya, tl.Story)
+	}
+
 	rivs := make([]RiverCell, len(w.Rivers))
 	copy(rivs, w.Rivers)
 	sort.Slice(rivs, func(i, j int) bool {

@@ -83,14 +83,16 @@ type simReadyMsg struct {
 }
 
 // enterSimCmd builds the slice's simulation off the Update loop —
-// NewSim regenerates the world, which takes regen-scale time.
+// NewSim regenerates the world, which takes regen-scale time. The
+// slice carries the sealed ages: old houses keep their names, tells
+// dot its map.
 func (m *model) enterSimCmd() tea.Cmd {
 	m.simGen++
 	gen := m.simGen
-	seed, kya := m.seed, m.kya
+	seed, kya, chain := m.seed, m.kya, m.chain
 	m.status = "pinning the slice — the courts convene..."
 	return func() tea.Msg {
-		return simReadyMsg{sim: world.NewSim(seed, kya), gen: gen, seed: seed, kya: kya}
+		return simReadyMsg{sim: world.NewSimWithFates(seed, kya, chain), gen: gen, seed: seed, kya: kya}
 	}
 }
 
@@ -368,22 +370,33 @@ func (m *model) applySimData(force bool) {
 }
 
 // openSimExitPopup confirms leaving — the year counter is the one
-// thing a slice doesn't keep.
+// thing a slice doesn't keep. Once the slice has run its full
+// millennium, leaving can instead SEAL it: its fate becomes the next
+// step of deep time, halls and tells and houses carried across.
 func (m *model) openSimExitPopup() {
 	year := 0
 	if m.sim != nil {
 		year = m.sim.Year
 	}
+	body := []string{
+		dimStyle.Render(fmt.Sprintf("%d years have passed in this slice.", year)),
+		dimStyle.Render("deep time resumes; re-entering replays the same history from year 0."),
+	}
+	var opts []popupOption
+	if m.sim != nil && m.sim.EpochReached() && m.kya > 0 && m.exp == nil {
+		body = append(body, "",
+			dimStyle.Render("the age has run its course — seal it, and what stands and what fell"),
+			dimStyle.Render(fmt.Sprintf("becomes the world at %dkya: the next step of deep time.", m.kya-1)))
+		opts = append(opts, popupOption{label: "Seal the age — its fate becomes the next step", action: popSealAge})
+	}
+	opts = append(opts,
+		popupOption{label: "Return to deep time (unsealed)", action: popExitSim},
+		popupOption{label: "Stay", action: popClose},
+	)
 	m.popup = &popupState{
 		title: "leave the simulation?",
-		body: []string{
-			dimStyle.Render(fmt.Sprintf("%d years have passed in this slice.", year)),
-			dimStyle.Render("deep time resumes; re-entering replays the same history from year 0."),
-		},
-		opts: []popupOption{
-			{label: "Return to deep time", action: popExitSim},
-			{label: "Stay", action: popClose},
-		},
+		body:  body,
+		opts:  opts,
 	}
 	m.mapStr = m.buildMap()
 }

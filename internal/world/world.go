@@ -204,6 +204,7 @@ type World struct {
 	Nests     []NestInfo      // drake nests at foothill peaks
 	Rookeries []RookeryInfo   // wyvern rookeries on cliffs
 	Volcanoes []VolcanoInfo   // born vents on the rift shoulder
+	Tells     []TellInfo      // ancient ruins folded in from sealed ages (fate.go)
 	Realms    []Realm         // polities: the Crown + independent enclaves
 	Territory []TerritoryCell // realm sphere-of-control per claimed land cell
 
