@@ -301,6 +301,7 @@ func (w *World) formRealms(capitalIdx int) {
 			IsCrown: true,
 			SeatX:   capSeat.X,
 			SeatY:   capSeat.Y,
+			Age:     1,
 		})
 		for _, i := range crown {
 			w.Seats[i].RealmID = nextID
@@ -402,6 +403,7 @@ func (w *World) formRealms(capitalIdx int) {
 			Name:  lead.Name,
 			SeatX: lead.X,
 			SeatY: lead.Y,
+			Age:   1,
 		})
 		for ii, i := range indep {
 			if find(ii) == e.root {

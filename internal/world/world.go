@@ -82,11 +82,16 @@ type NamedSeat struct {
 // SeatX/SeatY locate the realm's leading hall — the capital for the
 // crown, the eldest hall for an enclave — and the realm takes that
 // hall's name (the hall stands for the realm, as halls do).
+//
+// Age counts the consecutive sealed ages the realm has stood through
+// (fate.go) — 1 for a polity of this age, more for a line that keeps
+// re-forming around the same leading hall across the dawns.
 type Realm struct {
 	ID           int64
 	Name         string
 	IsCrown      bool
 	SeatX, SeatY int64
+	Age          int
 }
 
 // TerritoryCell assigns one land cell to a realm's sphere of control —

@@ -85,6 +85,12 @@ const (
 	successionCrisisDoubt  = 0.08
 	crownCrisisDoubt       = 0.04
 
+	// houseRootsDamp: a house that has held its hall across sealed
+	// ages (fate.go) fails less often — deep roots steady the line.
+	// Crisis chance divides by (1 + damp × ages held before this one):
+	// a three-age house fails at ~6.9% instead of 12%.
+	houseRootsDamp = 0.25
+
 	// houseSeedSalt offsets a seat's house-name stream from its own
 	// name stream (both derive from the same cell coordinates).
 	houseSeedSalt = 7331
@@ -220,11 +226,17 @@ type Sim struct {
 	highStreak  []int // consecutive years above swearThreshold (independents)
 
 	// Heritage lines, indexed like W.Seats: the ruling house of each
-	// hall, the year it took the hall, and the year the current lord's
-	// reign ends.
+	// hall, the year it took the hall, the year the current lord's
+	// reign ends, and how many sealed ages the house has held the hall
+	// before this one (deep roots resist succession crises).
 	house      []string
 	houseSince []int
 	reignEnd   []int
+	houseAges  []int
+
+	// ageNumber is this slice's ordinal among the seed's ages —
+	// 1 with no sealed history, latest fate's Age + 1 on a chain.
+	ageNumber int
 
 	// lineage records the origin of realms founded during the slice
 	// (realm ID → chronicle note); realms that predate it have none.
@@ -365,6 +377,17 @@ func (s *Sim) LairActivity(x, y int64) float64 {
 	return 1
 }
 
+// HouseTenure returns how many sealed ages the house at (x, y) has
+// held its hall before this one (0 for a line of this age or no seat).
+func (s *Sim) HouseTenure(x, y int64) int {
+	for i := range s.W.Seats {
+		if s.W.Seats[i].X == x && s.W.Seats[i].Y == y {
+			return s.houseAges[i]
+		}
+	}
+	return 0
+}
+
 // HouseAt returns the ruling house of the seat at (x, y) and the year
 // it took the hall ("" if no seat is there).
 func (s *Sim) HouseAt(x, y int64) (string, int) {
@@ -486,6 +509,8 @@ func newSimOn(w World, seed int64, kya int) *Sim {
 	s.house = make([]string, len(w.Seats))
 	s.houseSince = make([]int, len(w.Seats))
 	s.reignEnd = make([]int, len(w.Seats))
+	s.houseAges = make([]int, len(w.Seats))
+	s.ageNumber = 1
 	s.lineage = make(map[int64]string)
 	for i := range w.Seats {
 		st := w.Seats[i]
@@ -748,12 +773,16 @@ func (s *Sim) stepSuccessions(emit emitFn) {
 		s.reignEnd[i] = s.Months + monthsPerYear*reignMinYears + s.rng.Intn(monthsPerYear*reignSpanYears)
 		s.temperament[i] = (s.rng.Float64()*2 - 1) * temperamentMax
 		s.lowStreak[i], s.highStreak[i] = 0, 0
-		if s.rng.Float64() >= successionCrisisChance {
+		// Deep roots steady the line: a house that has held its hall
+		// across sealed ages fails less often.
+		chance := successionCrisisChance / (1 + houseRootsDamp*float64(s.houseAges[i]))
+		if s.rng.Float64() >= chance {
 			continue // the heir is sound; the hall barely notices
 		}
 		old := s.house[i]
 		s.house[i] = generateName(s.rng.Int63())
 		s.houseSince[i] = s.Year
+		s.houseAges[i] = 0 // the new house starts its own line
 		if i == s.capitalIdx {
 			for j := range s.W.Seats {
 				if j != s.capitalIdx && s.W.Seats[j].RealmID == s.crownID && s.base[j] >= 0 {
@@ -899,6 +928,7 @@ func (s *Sim) secede(i int, emit emitFn) {
 		Name:  st.Name,
 		SeatX: st.X,
 		SeatY: st.Y,
+		Age:   1,
 	})
 	s.lineage[s.nextRealmID] = fmt.Sprintf("sundered from the crown of %s in year %d, under House %s",
 		s.realmName(s.crownID), s.Year, s.house[i])
@@ -972,6 +1002,7 @@ func (s *Sim) removeSeat(i int) {
 	s.house = append(s.house[:i], s.house[i+1:]...)
 	s.houseSince = append(s.houseSince[:i], s.houseSince[i+1:]...)
 	s.reignEnd = append(s.reignEnd[:i], s.reignEnd[i+1:]...)
+	s.houseAges = append(s.houseAges[:i], s.houseAges[i+1:]...)
 	s.seatCrisisIdx = append(s.seatCrisisIdx[:i], s.seatCrisisIdx[i+1:]...)
 	if i < s.capitalIdx {
 		s.capitalIdx--
@@ -1204,6 +1235,7 @@ func (s *Sim) raiseHall(realmID int64, x, y int64, name string, onRiver bool, ru
 	s.house = append(s.house, generateName(s.rng.Int63()))
 	s.houseSince = append(s.houseSince, s.Year)
 	s.reignEnd = append(s.reignEnd, s.Months+monthsPerYear*reignMinYears+s.rng.Intn(monthsPerYear*reignSpanYears))
+	s.houseAges = append(s.houseAges, 0)
 	s.seatCrisisIdx = append(s.seatCrisisIdx, -1)
 	s.recomputeLairNoted()
 

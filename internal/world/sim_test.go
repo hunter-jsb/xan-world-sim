@@ -269,7 +269,7 @@ func checkSimArrays(t *testing.T, s *Sim) {
 		"base": len(s.base), "temperament": len(s.temperament), "stance": len(s.stance),
 		"lowStreak": len(s.lowStreak), "highStreak": len(s.highStreak), "ruinStreak": len(s.ruinStreak),
 		"house": len(s.house), "houseSince": len(s.houseSince), "reignEnd": len(s.reignEnd),
-		"seatCrisisIdx": len(s.seatCrisisIdx),
+		"houseAges": len(s.houseAges), "seatCrisisIdx": len(s.seatCrisisIdx),
 	} {
 		if l != n {
 			t.Errorf("array %s has %d entries, %d seats", name, l, n)

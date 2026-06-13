@@ -82,6 +82,38 @@ type simReadyMsg struct {
 	kya  int
 }
 
+// ageSealedMsg delivers the fate of an unwatched age (n in deep
+// time) — the canonical slice run headlessly off the Update loop.
+type ageSealedMsg struct {
+	fate world.Fate
+	gen  int
+	seed int64
+}
+
+// applySealedFate commits a sealed age — watched or not, it's the
+// same record — and steps deep time to the moment after it. Branch
+// semantics mirror SaveFate: this future replaces any previously
+// sealed at or after this moment.
+func (m model) applySealedFate(fate world.Fate) (tea.Model, tea.Cmd) {
+	if err := world.SaveFate(m.ctx, m.conn, fate); err != nil {
+		m.status = fmt.Sprintf("the age would not seal: %v", err)
+		return m, nil
+	}
+	kept := m.chain[:0:0]
+	for _, f := range m.chain {
+		if f.Kya > fate.Kya {
+			kept = append(kept, f)
+		}
+	}
+	m.chain = append(kept, fate)
+	m.kya = fate.Kya - 1
+	m.era = world.EraForKya(m.kya)
+	m.mapStr = m.buildMap()
+	return m, tea.Batch(m.regen(m.seed, m.kya),
+		m.showToast(fmt.Sprintf("the %s age is sealed — deep time steps to %dkya carrying its fate",
+			world.AgeOrdinal(fate.Age), m.kya)))
+}
+
 // enterSimCmd builds the slice's simulation off the Update loop —
 // NewSim regenerates the world, which takes regen-scale time. The
 // slice carries the sealed ages: old houses keep their names, tells
@@ -328,6 +360,7 @@ func (m *model) applySimData(force bool) {
 			if r, ok := realmByID[tc.RealmID]; ok {
 				row.RealmName = r.Name
 				row.IsCrown = r.IsCrown
+				row.RealmAge = int64(r.Age)
 			}
 			terr[i] = row
 		}

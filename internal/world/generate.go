@@ -73,8 +73,12 @@ func GenerateWithFates(seed int64, kya int, fates []Fate) World {
 	w.placeSeats()
 	w.placeReaches()
 	w.placeOutholds()
-	w.foldFates(fates)
 	w.placeLairs()
+	// The remembered ages fold in once everything geographic stands:
+	// old halls and tells join before pressure, roads, and the polity
+	// (so the new age builds around them), and lairs the last age saw
+	// buried are culled from the fresh placement.
+	w.foldFates(fates)
 	w.applyDragonPressure()
 
 	w.findPasses()
@@ -90,6 +94,7 @@ func GenerateWithFates(seed int64, kya int, fates []Fate) World {
 	w.computeAllegiance(capitalIdx)
 	w.formRealms(capitalIdx)
 	w.claimTerritory()
+	w.foldRealmLineage(fates)
 	return w
 }
 

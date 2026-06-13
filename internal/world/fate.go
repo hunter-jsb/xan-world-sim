@@ -1,6 +1,9 @@
 package world
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // Fate — the sealed record of one simulated millennium, and the
 // bridge between the engine's two motions. A slice at kya K covers
@@ -19,13 +22,16 @@ import "fmt"
 // age swears its oaths anew, and the polity re-forms around the
 // rivers, the old halls, and the tells.
 
-// FateSeat is a hall alive when the age was sealed.
+// FateSeat is a hall alive when the age was sealed. HouseAges counts
+// the consecutive ages its house has held it, the sealing age
+// included — deep roots resist succession crises in the ages after.
 type FateSeat struct {
-	X     int64  `json:"x"`
-	Y     int64  `json:"y"`
-	Tier  int64  `json:"tier"`
-	Name  string `json:"name"`
-	House string `json:"house"`
+	X         int64  `json:"x"`
+	Y         int64  `json:"y"`
+	Tier      int64  `json:"tier"`
+	Name      string `json:"name"`
+	House     string `json:"house"`
+	HouseAges int    `json:"house_ages"`
 }
 
 // FateRuin is a hall lost during the age — a tell in the making.
@@ -46,16 +52,59 @@ type FateEvent struct {
 	Text string `json:"text"`
 }
 
+// FateRealm is a polity standing at the seal. Realms are keyed by
+// name across ages (a realm's name is its leading hall's, and hall
+// names are cell-keyed) — a realm whose name re-forms in the next
+// age continues the lineage and counts another age.
+type FateRealm struct {
+	Name    string `json:"name"`
+	IsCrown bool   `json:"is_crown"`
+	Age     int    `json:"age"` // ages this realm has stood, this one included
+}
+
+// FateLair is the state of a lair at the seal: its raid activity
+// carries across the dawn (a rampant dragon does not calm for a
+// calendar), and a buried lair stays buried — the mountain keeps
+// what it takes.
+type FateLair struct {
+	X        int64   `json:"x"`
+	Y        int64   `json:"y"`
+	Kind     string  `json:"kind"`
+	Activity float64 `json:"activity"`
+	Buried   bool    `json:"buried"`
+}
+
+// FateGrudge is a standing grievance between realms at the seal,
+// keyed by realm names. Oaths wash out between ages; blood feuds
+// smolder on as embers.
+type FateGrudge struct {
+	A    string  `json:"a"`
+	B    string  `json:"b"`
+	Heat float64 `json:"heat"`
+}
+
 // Fate is the distilled terminal record of the canonical slice at
 // Kya. It covers the millennium (Kya, Kya−1] and is folded into
-// every world generated at kya < Kya.
+// every world generated at kya < Kya. Age is the record's ordinal —
+// the first sealed age of a seed is 1.
 type Fate struct {
-	Seed   int64       `json:"seed"`
-	Kya    int         `json:"kya"`
-	Seats  []FateSeat  `json:"seats"`
-	Ruins  []FateRuin  `json:"ruins"`
-	Annals []FateEvent `json:"annals"`
+	Seed    int64        `json:"seed"`
+	Kya     int          `json:"kya"`
+	Age     int          `json:"age"`
+	Seats   []FateSeat   `json:"seats"`
+	Ruins   []FateRuin   `json:"ruins"`
+	Annals  []FateEvent  `json:"annals"`
+	Realms  []FateRealm  `json:"realms"`
+	Lairs   []FateLair   `json:"lairs"`
+	Grudges []FateGrudge `json:"grudges"`
 }
+
+// grudgeMinHeat is the grievance a feud needs at the seal to be
+// remembered; grudgeEmberK is how much of it survives the dawn.
+const (
+	grudgeMinHeat = 0.3
+	grudgeEmberK  = 0.5
+)
 
 // TellInfo names an ancient ruin on a generated map — a fate ruin
 // that survived reconciliation against the new era's geography.
@@ -75,10 +124,11 @@ func (s *Sim) EpochReached() bool { return s.Months >= sliceYears*monthsPerYear 
 // remember. Nominally called at or after the epoch mark (year 1000);
 // the record is whatever stands and whatever fell by that moment.
 func DistillFate(s *Sim) Fate {
-	f := Fate{Seed: s.W.Seed, Kya: s.W.Kya}
+	f := Fate{Seed: s.W.Seed, Kya: s.W.Kya, Age: s.ageNumber}
 	for i := range s.W.Seats {
 		st := s.W.Seats[i]
-		f.Seats = append(f.Seats, FateSeat{X: st.X, Y: st.Y, Tier: st.Tier, Name: st.Name, House: s.house[i]})
+		f.Seats = append(f.Seats, FateSeat{X: st.X, Y: st.Y, Tier: st.Tier, Name: st.Name,
+			House: s.house[i], HouseAges: s.houseAges[i] + 1})
 	}
 	f.Ruins = append(f.Ruins, s.fallen...)
 	for _, e := range s.Log {
@@ -86,7 +136,45 @@ func DistillFate(s *Sim) Fate {
 			f.Annals = append(f.Annals, FateEvent{Year: e.Year, Kind: e.Kind, Text: e.Text})
 		}
 	}
+	for _, r := range s.W.Realms {
+		age := r.Age
+		if age < 1 {
+			age = 1 // realms born mid-slice are in their first age
+		}
+		f.Realms = append(f.Realms, FateRealm{Name: r.Name, IsCrown: r.IsCrown, Age: age})
+	}
+	for i, l := range s.lairs {
+		f.Lairs = append(f.Lairs, FateLair{X: l.X, Y: l.Y, Kind: l.Kind, Activity: s.activity[i]})
+	}
+	for _, d := range s.deadLairs {
+		f.Lairs = append(f.Lairs, FateLair{X: d[0], Y: d[1], Buried: true})
+	}
+	for pair, heat := range s.grievance {
+		if heat < grudgeMinHeat {
+			continue
+		}
+		a, b := s.realmName(pair[0]), s.realmName(pair[1])
+		if a == "" || b == "" {
+			continue // a feud dies with its realm
+		}
+		f.Grudges = append(f.Grudges, FateGrudge{A: a, B: b, Heat: heat})
+	}
+	sortGrudges(f.Grudges)
 	return f
+}
+
+// sortGrudges orders grudges deterministically (map iteration above
+// is not) — by names, then heat.
+func sortGrudges(gs []FateGrudge) {
+	sort.Slice(gs, func(i, j int) bool {
+		if gs[i].A != gs[j].A {
+			return gs[i].A < gs[j].A
+		}
+		if gs[i].B != gs[j].B {
+			return gs[i].B < gs[j].B
+		}
+		return gs[i].Heat > gs[j].Heat
+	})
 }
 
 // CanonicalFate computes the fate of the unwatched slice at kya on
@@ -215,6 +303,91 @@ func (w *World) foldFates(fates []Fate) {
 			})
 		}
 	}
+
+	// The mountain keeps what it takes: lairs the last age saw buried
+	// don't re-form at the same peaks. Runs against the freshly placed
+	// lair lists, so feature counts and region cells stay paired.
+	for _, fl := range latest.Lairs {
+		if !fl.Buried {
+			continue
+		}
+		for i, d := range w.Dens {
+			if d.X == fl.X && d.Y == fl.Y {
+				w.Dens = append(w.Dens[:i], w.Dens[i+1:]...)
+				w.Regions = setRegionAt(w.Regions, fl.X, fl.Y, RegionMountain)
+				break
+			}
+		}
+		for i, n := range w.Nests {
+			if n.X == fl.X && n.Y == fl.Y {
+				w.Nests = append(w.Nests[:i], w.Nests[i+1:]...)
+				w.Regions = setRegionAt(w.Regions, fl.X, fl.Y, RegionFoothill)
+				break
+			}
+		}
+		for i, r := range w.Rookeries {
+			if r.X == fl.X && r.Y == fl.Y {
+				w.Rookeries = append(w.Rookeries[:i], w.Rookeries[i+1:]...)
+				w.Regions = setRegionAt(w.Regions, fl.X, fl.Y, RegionCliff)
+				break
+			}
+		}
+	}
+}
+
+// foldRealmLineage runs after the polity forms: a realm whose name
+// re-forms across the dawn (the same leading hall, since names are
+// cell-keyed) continues its line and counts another age. Everything
+// else about the polity is sworn anew — lineage is the memory,
+// allegiance is the present.
+func (w *World) foldRealmLineage(fates []Fate) {
+	var latest *Fate
+	for i := range fates {
+		f := &fates[i]
+		if f.Kya <= w.Kya {
+			continue
+		}
+		if latest == nil || f.Kya < latest.Kya {
+			latest = f
+		}
+	}
+	if latest == nil {
+		return
+	}
+	ageOf := make(map[string]int, len(latest.Realms))
+	for _, fr := range latest.Realms {
+		ageOf[fr.Name] = fr.Age
+	}
+	for i := range w.Realms {
+		if age, ok := ageOf[w.Realms[i].Name]; ok {
+			w.Realms[i].Age = age + 1
+		}
+	}
+}
+
+// ageOrdinal spells an age number for chronicle prose.
+func AgeOrdinal(n int) string {
+	switch n {
+	case 1:
+		return "first"
+	case 2:
+		return "second"
+	case 3:
+		return "third"
+	case 4:
+		return "fourth"
+	case 5:
+		return "fifth"
+	case 6:
+		return "sixth"
+	case 7:
+		return "seventh"
+	case 8:
+		return "eighth"
+	case 9:
+		return "ninth"
+	}
+	return fmt.Sprintf("%dth", n)
 }
 
 // setRegionAt flips the region of one cell in a regions slice and
@@ -230,9 +403,10 @@ func setRegionAt(regions []RegionCell, x, y, regionID int64) []RegionCell {
 }
 
 // NewSimWithFates is NewSim on the world the chain implies. The
-// latest fate also seeds continuity the map can't carry: a hall that
-// stood at the seal keeps its house, and the chronicle opens with
-// the dawn of the new age.
+// latest fate also seeds the continuity the map can't carry: houses
+// keep their halls (and their roots), dragons keep their tempers,
+// old enemies keep their embers, and the chronicle opens with the
+// dawn of a numbered age.
 func NewSimWithFates(seed int64, kya int, chain []Fate) *Sim {
 	s := newSimOn(GenerateWithFates(seed, kya, chain), seed, kya)
 	var latest *Fate
@@ -248,25 +422,60 @@ func NewSimWithFates(seed int64, kya int, chain []Fate) *Sim {
 	if latest == nil {
 		return s
 	}
-	houseOf := make(map[[2]int64]string, len(latest.Seats))
+	s.ageNumber = latest.Age + 1
+
+	houseOf := make(map[[2]int64]FateSeat, len(latest.Seats))
 	for _, fs := range latest.Seats {
-		houseOf[[2]int64{fs.X, fs.Y}] = fs.House
+		houseOf[[2]int64{fs.X, fs.Y}] = fs
 	}
 	carried := 0
 	for i := range s.W.Seats {
-		if h, ok := houseOf[[2]int64{s.W.Seats[i].X, s.W.Seats[i].Y}]; ok && h != "" {
-			s.house[i] = h
+		if fs, ok := houseOf[[2]int64{s.W.Seats[i].X, s.W.Seats[i].Y}]; ok && fs.House != "" {
+			s.house[i] = fs.House
+			s.houseAges[i] = fs.HouseAges
 			carried++
 		}
 	}
+
+	// Dragons don't calm for a calendar: surviving lairs wake with
+	// the activity they held at the seal.
+	lairAt := make(map[[2]int64]FateLair, len(latest.Lairs))
+	for _, fl := range latest.Lairs {
+		if !fl.Buried {
+			lairAt[[2]int64{fl.X, fl.Y}] = fl
+		}
+	}
+	for i, l := range s.lairs {
+		if fl, ok := lairAt[[2]int64{l.X, l.Y}]; ok {
+			s.activity[i] = fl.Activity
+		}
+	}
+
+	// Embers of the old feuds: grievance between realms whose names
+	// crossed the dawn opens warm.
+	realmByName := make(map[string]int64, len(s.W.Realms))
+	for _, r := range s.W.Realms {
+		realmByName[r.Name] = r.ID
+	}
+	for _, gr := range latest.Grudges {
+		a, aok := realmByName[gr.A]
+		b, bok := realmByName[gr.B]
+		if !aok || !bok || a == b {
+			continue
+		}
+		if heat := gr.Heat * grudgeEmberK; heat > s.grievance[pairKey(a, b)] {
+			s.grievance[pairKey(a, b)] = heat
+		}
+	}
+
 	var x, y int64
 	if s.capitalIdx >= 0 {
 		x, y = s.W.Seats[s.capitalIdx].X, s.W.Seats[s.capitalIdx].Y
 	}
 	s.Log = append(s.Log, SimEvent{
 		Kind: "epoch", Major: true, X: x, Y: y, Cause: -1,
-		Text: fmt.Sprintf("a new age dawns — %d houses carry their names across the millennium, and %d tells mark the old one",
-			carried, len(s.W.Tells)),
+		Text: fmt.Sprintf("the %s age dawns — %d houses carry their names across the millennium, and %d tells mark the old one",
+			AgeOrdinal(s.ageNumber), carried, len(s.W.Tells)),
 	})
 	return s
 }

@@ -48,11 +48,11 @@ func TestGenerate_Snapshot(t *testing.T) {
 		seed     int64
 		expected string
 	}{
-		{KyaNow, 0, "6055ea9ffd5efcd72734b259a568933ef14d0fc8d392eba718f2c39e3cdadc59"},
-		{KyaNow, 42, "04a1facae97d071482894df52b1dce0eb64739b065a318cba216ee20868b2e76"},
+		{KyaNow, 0, "956dcc5dad8736588392ab7d349eb103abf6c275052630e652bea422e2edddfd"},
+		{KyaNow, 42, "1537cb878558b56d38a2f647f47effd09d4ec604f1b9afd824eb6c287a8868d8"},
 		{KyaOldWorld, 0, "906809c78832b262eea3523b57cc9395586887b2f36d321d7aacb02ce125da63"},
 		{KyaOldWorld, 42, "6d3302e5b1ba59259cc8be0b4c8a172c1ee7c0ee2617923a3fe599eff2d63ac2"},
-		{100, 42, "b5037b0f49fb9d8e71a3a2a141031a6fde3546990af32463b365f0882d0f0ff1"}, // mid-cycle
+		{100, 42, "56e88d1461e21d6d843e8958040383e46d9cde823cb4fd8b9c5d61329e00674d"}, // mid-cycle
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("kya=%d/seed=%d", c.kya, c.seed), func(t *testing.T) {
@@ -121,7 +121,7 @@ func hashWorld(w World) string {
 	copy(realms, w.Realms)
 	sort.Slice(realms, func(i, j int) bool { return realms[i].ID < realms[j].ID })
 	for _, r := range realms {
-		fmt.Fprintf(&b, "RM(%d,%s,%t,%d,%d)|", r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY)
+		fmt.Fprintf(&b, "RM(%d,%s,%t,%d,%d,%d)|", r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY, r.Age)
 	}
 
 	terr := make([]TerritoryCell, len(w.Territory))

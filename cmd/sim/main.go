@@ -108,8 +108,11 @@ type model struct {
 
 	// chain is the seed's sealed ages (fate.go) — folded into every
 	// regen and every slice, persisted per seed, grown by sealing a
-	// finished slice into the next step of deep time.
-	chain []world.Fate
+	// finished slice (or letting one pass unwatched with n) into the
+	// next step of deep time. ageGen invalidates in-flight unwatched
+	// ages when the user rerolls or scrubs away.
+	chain  []world.Fate
+	ageGen int
 
 	// Cursor position on the map.
 	curX, curY int64
@@ -209,6 +212,8 @@ const (
 	popJumpPOI     popupAction = "jump-poi"     // arg = index into m.pois
 	popExitSim     popupAction = "exit-sim"     // leave simulation mode
 	popSealAge     popupAction = "seal-age"     // distill the slice's fate, step deep time forward
+	popAnnals      popupAction = "annals"       // the sealed-ages list (deep time's L)
+	popAnnalsAge   popupAction = "annals-age"   // arg = index into m.chain — one age's page
 	popJumpXY      popupAction = "jump-xy"      // jump cursor to the popup's cell
 	popEventDetail popupAction = "event-detail" // arg = index into m.sim.Log — opens the event's page
 	popChronicle   popupAction = "chronicle"    // back to the chronicle list
@@ -358,7 +363,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.showToast("the years resume")
 			}
 		case "L":
-			m.openChroniclePopup(-1)
+			if m.simMode {
+				m.openChroniclePopup(-1)
+			} else {
+				m.openAnnalsPopup()
+			}
+		case "n":
+			if m.deepTimeLocked() {
+				return m, nil
+			}
+			if m.kya <= 0 {
+				return m, m.showToast("the present is the edge of time — no age left to pass")
+			}
+			m.ageGen++
+			gen := m.ageGen
+			seed, kya, chain := m.seed, m.kya, m.chain
+			m.status = fmt.Sprintf("an age passes unwatched — the millennium at %dkya runs its course...", kya)
+			return m, func() tea.Msg {
+				return ageSealedMsg{fate: world.CanonicalFate(seed, kya, chain), gen: gen, seed: seed}
+			}
 		case "g":
 			m.jumpLatestNews()
 		case "enter":
@@ -526,6 +549,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startSim(msg.sim)
 
+	case ageSealedMsg:
+		// An unwatched age finished its millennium. Discard if the user
+		// rerolled or wandered into a slice while it ran.
+		if msg.gen != m.ageGen || msg.seed != m.seed || m.simMode {
+			return m, nil
+		}
+		return m.applySealedFate(msg.fate)
+
 	case expTickMsg:
 		if m.exp == nil || m.exp.phase != expRunning || msg.gen != m.expGen {
 			return m, nil // stale tick from an abandoned expedition
@@ -553,12 +584,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			e.phase = expArrived
 			m.status = fmt.Sprintf("the %s expedition arrived at (%d,%d) after %d days",
 				e.fromName, e.destX, e.destY, e.totalDays())
+			body := []string{
+				fmt.Sprintf("The %s expedition reached (%d,%d)", e.fromName, e.destX, e.destY),
+				fmt.Sprintf("after %d days on the road.", e.totalDays()),
+			}
+			// Delving a tell: an expedition that marches to an ancient
+			// ruin comes back with its story.
+			if f, ok := m.featureAt[[2]int64{e.destX, e.destY}]; ok && f.Kind == "ruin" && f.Detail != "" {
+				body = append(body, "",
+					dimStyle.Render(fmt.Sprintf("among the fallen stones of %s the drovers turn up", f.Name)),
+					dimStyle.Render(fmt.Sprintf("a house seal and a charred lintel — %s", f.Detail)))
+			}
 			m.popup = &popupState{
 				title: "expedition arrived",
-				body: []string{
-					fmt.Sprintf("The %s expedition reached (%d,%d)", e.fromName, e.destX, e.destY),
-					fmt.Sprintf("after %d days on the road.", e.totalDays()),
-				},
+				body:  body,
 				opts:  []popupOption{{label: "Conclude the expedition", action: popConclude}},
 				cellX: e.destX, cellY: e.destY,
 			}
@@ -722,6 +761,7 @@ func (m *model) cellInfoAt(x, y int64) render.CellInfo {
 		info.RealmID = t.RealmID
 		info.RealmName = t.RealmName
 		info.RealmIsCrown = t.IsCrown
+		info.RealmAge = t.RealmAge
 	}
 	if f, ok := m.featureAt[[2]int64{x, y}]; ok {
 		info.FeatureName = f.Name
@@ -1014,25 +1054,13 @@ func (m model) handlePopupChoice(opt popupOption) (tea.Model, tea.Cmd) {
 			break
 		}
 		fate := world.DistillFate(m.sim)
-		if err := world.SaveFate(m.ctx, m.conn, fate); err != nil {
-			m.status = fmt.Sprintf("the age would not seal: %v", err)
-			break
-		}
-		// Branch semantics in memory, mirroring SaveFate: this future
-		// replaces any previously sealed at or after this moment.
-		kept := m.chain[:0:0]
-		for _, f := range m.chain {
-			if f.Kya > fate.Kya {
-				kept = append(kept, f)
-			}
-		}
-		m.chain = append(kept, fate)
 		m.exitSim()
-		m.kya--
-		m.era = world.EraForKya(m.kya)
-		m.mapStr = m.buildMap()
-		return m, tea.Batch(m.regen(m.seed, m.kya),
-			m.showToast(fmt.Sprintf("the age is sealed — deep time steps to %dkya carrying its fate", m.kya)))
+		return m.applySealedFate(fate)
+
+	case popAnnals:
+		m.openAnnalsPopup()
+	case popAnnalsAge:
+		m.openAnnalsAgePopup(opt.arg)
 
 	case popJumpXY:
 		m.curX, m.curY = pop.cellX, pop.cellY
@@ -1121,10 +1149,17 @@ func (m *model) openCellPopup() {
 				add("contested marchland — two banners claim this ground")
 			}
 			if h, since := m.sim.HouseAt(m.curX, m.curY); h != "" {
+				roots := ""
+				if ages := m.sim.HouseTenure(m.curX, m.curY); ages > 0 {
+					roots = fmt.Sprintf(", keeper for %d sealed age", ages)
+					if ages > 1 {
+						roots += "s"
+					}
+				}
 				if since > 0 {
-					add("house: House %s (took the hall in year %d)", h, since)
+					add("house: House %s (took the hall in year %d%s)", h, since, roots)
 				} else {
-					add("house: House %s (an old line)", h)
+					add("house: House %s (an old line%s)", h, roots)
 				}
 			}
 			if info.RealmID != 0 {

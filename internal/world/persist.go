@@ -51,8 +51,8 @@ func Persist(ctx context.Context, conn *sql.DB, w World) error {
 		return err
 	}
 	if err := insertAll(ctx, tx, "realm",
-		"INSERT INTO realms (id, name, is_crown, seat_x, seat_y) VALUES (?, ?, ?, ?, ?)",
-		w.Realms, func(r Realm) []any { return []any{r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY} },
+		"INSERT INTO realms (id, name, is_crown, seat_x, seat_y, age) VALUES (?, ?, ?, ?, ?, ?)",
+		w.Realms, func(r Realm) []any { return []any{r.ID, r.Name, r.IsCrown, r.SeatX, r.SeatY, r.Age} },
 	); err != nil {
 		return err
 	}

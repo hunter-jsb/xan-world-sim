@@ -117,6 +117,10 @@ func TestFate_HousesPersist(t *testing.T) {
 				t.Errorf("hall at (%d,%d): house %q, the old age sealed %q",
 					s.W.Seats[i].X, s.W.Seats[i].Y, s.house[i], h)
 			}
+			if got := s.HouseTenure(s.W.Seats[i].X, s.W.Seats[i].Y); got < 1 {
+				t.Errorf("hall at (%d,%d): carried house has tenure %d, want ≥ 1 sealed age",
+					s.W.Seats[i].X, s.W.Seats[i].Y, got)
+			}
 			carried++
 		}
 	}
@@ -125,6 +129,88 @@ func TestFate_HousesPersist(t *testing.T) {
 	}
 	if len(s.Log) == 0 || s.Log[0].Kind != "epoch" || s.Log[0].Year != 0 {
 		t.Error("the chronicle does not open with the dawn of the new age")
+	}
+	if s.ageNumber != fate.Age+1 {
+		t.Errorf("the new slice counts itself age %d after sealed age %d", s.ageNumber, fate.Age)
+	}
+}
+
+// TestFate_LineageTempersAndGrudges: the rest of what crosses a dawn
+// — realm lines count their ages, a buried den stays buried, a
+// surviving dragon wakes with the temper it held, and old enemies
+// open the age with embers still warm.
+func TestFate_LineageTempersAndGrudges(t *testing.T) {
+	base := Generate(42, 0)
+	var crown, league string
+	for _, r := range base.Realms {
+		if r.IsCrown {
+			crown = r.Name
+		} else if league == "" {
+			league = r.Name
+		}
+	}
+	if crown == "" || league == "" {
+		t.Fatal("base world lacks a crown or a league — the probe needs both")
+	}
+	if len(base.Dens) < 2 {
+		t.Fatal("base world has fewer than two dragon dens")
+	}
+	hot, buried := base.Dens[0], base.Dens[1]
+	fate := Fate{Seed: 42, Kya: 1, Age: 3,
+		Realms: []FateRealm{{Name: crown, IsCrown: true, Age: 3}},
+		Lairs: []FateLair{
+			{X: hot.X, Y: hot.Y, Kind: "dragon", Activity: 1.8},
+			{X: buried.X, Y: buried.Y, Buried: true},
+		},
+		Grudges: []FateGrudge{{A: crown, B: league, Heat: 0.8}},
+	}
+	chain := []Fate{fate}
+
+	w := GenerateWithFates(42, 0, chain)
+	for _, d := range w.Dens {
+		if d.X == buried.X && d.Y == buried.Y {
+			t.Error("the buried den re-formed — the mountain gave back what it took")
+		}
+	}
+	if got := gridOf(w.Regions).regionAt([2]int{int(buried.X), int(buried.Y)}); got != RegionMountain {
+		t.Errorf("the buried den's cell is region %d, want plain mountain", got)
+	}
+	crownAged := false
+	for _, r := range w.Realms {
+		if r.Name == crown {
+			crownAged = true
+			if r.Age != 4 {
+				t.Errorf("the crown of %s is in age %d, want 4 (3 sealed + this one)", crown, r.Age)
+			}
+		} else if r.Age != 1 {
+			t.Errorf("realm %q has age %d with no recorded lineage", r.Name, r.Age)
+		}
+	}
+	if !crownAged {
+		t.Errorf("the crown of %s did not re-form — lineage has nothing to land on", crown)
+	}
+
+	s := NewSimWithFates(42, 0, chain)
+	if s.ageNumber != 4 {
+		t.Errorf("slice counts itself age %d, want 4", s.ageNumber)
+	}
+	if got := s.LairActivity(hot.X, hot.Y); got != 1.8 {
+		t.Errorf("the dragon of %s wakes at activity %g, sealed at 1.8", hot.Name, got)
+	}
+	var a, b int64
+	for _, r := range s.W.Realms {
+		if r.Name == crown {
+			a = r.ID
+		}
+		if r.Name == league {
+			b = r.ID
+		}
+	}
+	if a == 0 || b == 0 {
+		t.Fatalf("crown %q or league %q missing from the fated slice", crown, league)
+	}
+	if got := s.grievance[pairKey(a, b)]; got != 0.8*grudgeEmberK {
+		t.Errorf("the old feud opens at %g, want %g", got, 0.8*grudgeEmberK)
 	}
 }
 

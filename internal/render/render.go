@@ -583,10 +583,12 @@ type CellInfo struct {
 
 	// Populated when the cell (or seat) belongs to a realm's sphere.
 	// SeatStance is only set for seats — the lore label + allegiance,
-	// e.g. "sworn (0.82)".
+	// e.g. "sworn (0.82)". RealmAge > 1 marks a lineage that has
+	// re-formed across sealed ages.
 	RealmID      int64
 	RealmName    string
 	RealmIsCrown bool
+	RealmAge     int64
 	SeatStance   string
 
 	// RockNote names the topmost lithology and how long ago it was
@@ -684,14 +686,34 @@ func InfoPanel(info CellInfo) string {
 }
 
 // realmPart renders the "realm X" annotation for claimed non-seat
-// cells (seats render their own richer version with stance).
+// cells (seats render their own richer version with stance). A
+// lineage that has crossed sealed ages carries its ordinal.
 func realmPart(info CellInfo) []string {
 	if info.RealmName == "" {
 		return nil
 	}
 	realmSt := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(RealmColor(info.RealmID, info.RealmIsCrown)))
-	return []string{realmSt.Render("realm " + info.RealmName)}
+	label := "realm " + info.RealmName
+	if info.RealmAge > 1 {
+		label += fmt.Sprintf(", %s of its name", ordinalShort(info.RealmAge))
+	}
+	return []string{realmSt.Render(label)}
+}
+
+// ordinalShort renders 2 → "2nd", 3 → "3rd", n → "nth".
+func ordinalShort(n int64) string {
+	suffix := "th"
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+	case n%10 == 1:
+		suffix = "st"
+	case n%10 == 2:
+		suffix = "nd"
+	case n%10 == 3:
+		suffix = "rd"
+	}
+	return fmt.Sprintf("%d%s", n, suffix)
 }
 
 func Title(s string) string {
